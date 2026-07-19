@@ -4,10 +4,15 @@ from utils.auth_helper import jwt_required, get_current_company
 from utils.file_extractor import extract_text_from_file
 from agents.resume_screener import screen_resume
 from agents.question_generator import generate_questions
+from agents.email_sender import send_rejection_email
 from datetime import datetime, timezone
 from bson import ObjectId
+import os
 
 candidates_bp = Blueprint("candidates", __name__)
+
+# ── Score threshold used at the resume-screening stage ────────────────────────
+SCREEN_REJECT_THRESHOLD = 70
 
 # ── Utility: serialize MongoDB doc ───────────────────────────────────────────
 def serialize_candidate(candidate: dict) -> dict:
@@ -96,14 +101,74 @@ def screen_candidate(job_id):
     if not screen_result["success"]:
         return jsonify({"success": False, "error": screen_result["error"]}), 500
 
-    screen_data = screen_result["data"]
+    screen_data  = screen_result["data"]
+    match_score  = screen_data.get("match_score", 0)
+    now          = datetime.now(timezone.utc)
+
+    # ── Auto-reject at resume-screening stage if below threshold ──────────────
+    if match_score < SCREEN_REJECT_THRESHOLD:
+        candidate_doc = {
+            "company_id"         : company["company_id"],
+            "job_id"             : job_id,
+            "job_title"          : job.get("job_title", ""),
+            "candidate_name"     : candidate_name,
+            "candidate_email"    : candidate_email,
+            "match_score"        : match_score,
+            "matched_skills"     : screen_data.get("matched_skills", []),
+            "missing_skills"     : screen_data.get("missing_skills", []),
+            "experience_match"   : screen_data.get("experience_match", False),
+            "recommendation"     : screen_data.get("recommendation", ""),
+            "reasoning"          : screen_data.get("reasoning", ""),
+            "interview_questions": {},
+            "status"             : "rejected",
+            "email_sent"         : False,
+            "resume_text"        : resume_text,
+            "evaluation"         : None,
+            "schedule"           : None,
+            "created_at"         : now,
+            "updated_at"         : now
+        }
+
+        inserted = candidates_collection.insert_one(candidate_doc)
+
+        jobs_collection.update_one(
+            {"_id": ObjectId(job_id)},
+            {"$inc": {"candidates_count": 1}}
+        )
+
+        email_result = send_rejection_email(
+            candidate_data=candidate_doc,
+            job_data=job,
+            company_name=company["company_name"],
+            from_email=os.getenv("BREVO_SENDER_EMAIL"),
+            stage="resume screening"
+        )
+
+        candidates_collection.update_one(
+            {"_id": inserted.inserted_id},
+            {"$set": {"email_sent": email_result.get("success", False)}}
+        )
+
+        candidate_doc["_id"]        = str(inserted.inserted_id)
+        candidate_doc["created_at"] = now.isoformat()
+        candidate_doc["updated_at"] = now.isoformat()
+        candidate_doc["email_sent"] = email_result.get("success", False)
+
+        return jsonify({
+            "success"     : True,
+            "message"     : "Candidate did not meet the match threshold — auto-rejected",
+            "candidate_id": str(inserted.inserted_id),
+            "candidate"   : candidate_doc,
+            "email_sent"  : email_result.get("success", False),
+            "email_error" : email_result.get("error") if not email_result.get("success") else None
+        }), 201
+
+    # ── Score >= threshold: continue existing flow (generate questions etc.) ──
 
     # ── Agent 3: Generate questions ───────────────────────────────────────────
     candidate_data   = {"candidate_name": candidate_name, "candidate_email": candidate_email}
     questions_result = generate_questions(candidate_data, job, screen_data)
     questions        = questions_result.get("data", {}).get("questions", {})
-
-    now = datetime.now(timezone.utc)
 
     candidate_doc = {
         "company_id"         : company["company_id"],
@@ -111,7 +176,7 @@ def screen_candidate(job_id):
         "job_title"          : job.get("job_title", ""),
         "candidate_name"     : candidate_name,
         "candidate_email"    : candidate_email,
-        "match_score"        : screen_data.get("match_score", 0),
+        "match_score"        : match_score,
         "matched_skills"     : screen_data.get("matched_skills", []),
         "missing_skills"     : screen_data.get("missing_skills", []),
         "experience_match"   : screen_data.get("experience_match", False),
@@ -196,6 +261,13 @@ def update_status(candidate_id):
         return jsonify({"success": False, "error": f"Invalid status. Must be one of {valid_statuses}"}), 400
 
     try:
+        candidate = candidates_collection.find_one({
+            "_id"       : ObjectId(candidate_id),
+            "company_id": company["company_id"]
+        })
+        if not candidate:
+            return jsonify({"success": False, "error": "Candidate not found"}), 404
+
         result = candidates_collection.update_one(
             {"_id": ObjectId(candidate_id), "company_id": company["company_id"]},
             {"$set": {"status": status, "updated_at": datetime.now(timezone.utc)}}
@@ -203,7 +275,32 @@ def update_status(candidate_id):
         if result.matched_count == 0:
             return jsonify({"success": False, "error": "Candidate not found"}), 404
 
-        return jsonify({"success": True, "message": f"Status updated to '{status}'"}), 200
+        email_sent  = False
+        email_error = None
+
+        # ── Manual rejection: send rejection email too ────────────────────────
+        if status == "rejected" and candidate.get("status") != "rejected":
+            job = jobs_collection.find_one({"_id": ObjectId(candidate["job_id"])})
+
+            # Was this candidate already interviewed, or just resume-screened?
+            stage = "interview" if candidate.get("interview_status") == "completed" else "resume screening"
+
+            email_result = send_rejection_email(
+                candidate_data=candidate,
+                job_data=job,
+                company_name=company["company_name"],
+                from_email=os.getenv("BREVO_SENDER_EMAIL"),
+                stage=stage
+            )
+            email_sent  = email_result.get("success", False)
+            email_error = email_result.get("error") if not email_sent else None
+
+        return jsonify({
+            "success"    : True,
+            "message"    : f"Status updated to '{status}'",
+            "email_sent" : email_sent,
+            "email_error": email_error
+        }), 200
     except Exception:
         return jsonify({"success": False, "error": "Invalid candidate ID"}), 400
 

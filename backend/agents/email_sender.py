@@ -84,6 +84,36 @@ Return ONLY this JSON shape — no markdown fences:
 
 _INTERVIEW_REQUIRED = {"subject", "greeting", "body", "sign_off"}
 
+# ── Prompts: Rejection email ───────────────────────────────────────────────────
+_REJECTION_SYSTEM = "You are a professional HR communication specialist writing a respectful rejection email. Return ONLY valid JSON. No markdown, no explanation."
+
+_REJECTION_TEMPLATE = """Write a warm, respectful, professional rejection email for this candidate. This candidate is being
+turned down at the stage indicated below. Keep the door open for future opportunities and thank them sincerely
+for their time and interest.
+
+CANDIDATE NAME  : {candidate_name}
+JOB TITLE       : {job_title}
+COMPANY NAME    : {company_name}
+STAGE           : {stage}
+
+STRICT RULES:
+- Write under the company's name, NOT RecruitMate AI
+- Do NOT reveal any score, numeric evaluation, or specific reasons for rejection
+- Do NOT sound robotic or generic — keep it kind, human, and encouraging
+- Thank them for their time and interest in the role
+- Mention that the company will keep their profile on file for future openings that may be a better fit
+- Keep it concise — 3-4 short sentences in the body is enough
+
+Return ONLY this JSON shape — no markdown fences:
+{{
+  "subject": "string",
+  "greeting": "string",
+  "body": "string",
+  "sign_off": "string"
+}}"""
+
+_REJECTION_REQUIRED = {"subject", "greeting", "body", "sign_off"}
+
 # ── Utility ──────────────────────────────────────────────────────────────────
 _FENCE = re.compile(r"```(?:json)?\s*|\s*```")
 
@@ -125,6 +155,7 @@ def _build_interview_html(parts: dict, company_name: str, interview_url: str) ->
         <p style="font-size: 12px; color: #9ca3af;">This email was sent by {company_name}. Please do not reply directly. This link expires in 3 days.</p>
     </div>
     """
+
 def _build_offline_html(parts: dict, company_name: str, interview_date: str, interview_time: str, location: str) -> str:
     return f"""
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 32px; border: 1px solid #e5e7eb; border-radius: 8px;">
@@ -137,6 +168,19 @@ def _build_offline_html(parts: dict, company_name: str, interview_date: str, int
             <p style="margin: 4px 0; color: #374151;"><strong>Location:</strong> {location}</p>
         </div>
         <p style="color: #374151; line-height: 1.7;">Please bring a valid ID and try to arrive 10 minutes early.</p>
+        <br/>
+        <p style="color: #374151;">{parts['sign_off']}</p>
+        <p style="color: #6b7280; font-weight: bold;">{company_name} Talent Acquisition Team</p>
+        <hr style="border: none; border-top: 1px solid #e5e7eb; margin-top: 24px;"/>
+        <p style="font-size: 12px; color: #9ca3af;">This email was sent by {company_name}. Please do not reply directly.</p>
+    </div>
+    """
+
+def _build_rejection_html(parts: dict, company_name: str) -> str:
+    return f"""
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 32px; border: 1px solid #e5e7eb; border-radius: 8px;">
+        <h2 style="color: #1f2937;">{parts['greeting']}</h2>
+        <p style="color: #374151; line-height: 1.7;">{parts['body']}</p>
         <br/>
         <p style="color: #374151;">{parts['sign_off']}</p>
         <p style="color: #6b7280; font-weight: bold;">{company_name} Talent Acquisition Team</p>
@@ -274,6 +318,7 @@ def send_interview_link_email(candidate_data: dict, job_data: dict, company_name
         return {"success": False, "error": f"Brevo API error: {e.reason}", "details": str(e.body)}
     except Exception as e:
         return {"success": False, "error": str(e)}
+
 # ── Prompts: Offline interview confirmation email ─────────────────────────────
 _OFFLINE_SYSTEM = "You are a professional HR communication specialist writing a final interview confirmation. Return ONLY valid JSON. No markdown, no explanation."
 
@@ -304,6 +349,7 @@ Return ONLY this JSON shape — no markdown fences:
 }}"""
 
 _OFFLINE_REQUIRED = {"subject", "greeting", "body", "sign_off"}
+
 # ── Step 5: Generate offline interview email content via LLM ─────────────────
 def generate_offline_email_content(candidate_data: dict, job_data: dict, company_name: str, interview_date: str, interview_time: str, location: str) -> dict:
     raw = ""
@@ -359,6 +405,73 @@ def send_shortlist_offline_email(candidate_data: dict, job_data: dict, company_n
         return {
             "success" : True,
             "message" : "Offline interview confirmation sent successfully",
+            "email_id": response.message_id,
+            "subject" : parts["subject"]
+        }
+
+    except ApiException as e:
+        return {"success": False, "error": f"Brevo API error: {e.reason}", "details": str(e.body)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+# ── Step 7: Generate rejection email content via LLM ──────────────────────────
+def generate_rejection_email_content(candidate_data: dict, job_data: dict, company_name: str, stage: str) -> dict:
+    raw = ""
+    try:
+        raw = _llm.invoke(
+            [
+                {"role": "system", "content": _REJECTION_SYSTEM},
+                {"role": "user",   "content": _REJECTION_TEMPLATE.format(
+                    candidate_name=candidate_data.get("candidate_name", "Candidate"),
+                    job_title=job_data.get("job_title", "") if job_data else "",
+                    company_name=company_name,
+                    stage=stage
+                )}
+            ]
+        ).content
+
+        parsed = json.loads(_clean(raw))
+
+        missing = _REJECTION_REQUIRED - parsed.keys()
+        if missing:
+            raise ValueError(f"LLM omitted required fields: {missing}")
+
+        return {"success": True, "data": parsed}
+
+    except json.JSONDecodeError as e:
+        return {"success": False, "error": f"JSON parse failed: {e}", "raw_response": raw}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+# ── Step 8: Send rejection email via Brevo ─────────────────────────────────────
+def send_rejection_email(candidate_data: dict, job_data: dict, company_name: str, from_email: str, stage: str = "resume screening") -> dict:
+    """
+    Generates and sends a respectful rejection email.
+    `stage` should be either "resume screening" or "interview" so the LLM
+    can phrase the email appropriately without revealing any score.
+    """
+    try:
+        result = generate_rejection_email_content(candidate_data, job_data, company_name, stage)
+        if not result["success"]:
+            return result
+
+        parts     = result["data"]
+        html_body = _build_rejection_html(parts, company_name)
+
+        sender_email = from_email or _BREVO_SENDER_EMAIL
+
+        send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
+            sender={"name": _BREVO_SENDER_NAME, "email": sender_email},
+            to=[{"email": candidate_data.get("candidate_email")}],
+            subject=parts["subject"],
+            html_content=html_body
+        )
+
+        response = _brevo_client.send_transac_email(send_smtp_email)
+
+        return {
+            "success" : True,
+            "message" : "Rejection email sent successfully",
             "email_id": response.message_id,
             "subject" : parts["subject"]
         }

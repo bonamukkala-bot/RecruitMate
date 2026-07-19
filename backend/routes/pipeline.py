@@ -12,7 +12,7 @@ from bson import ObjectId
 import secrets
 from datetime import datetime, timezone, timedelta
 import os
-from agents.email_sender import send_email, send_interview_link_email, send_shortlist_offline_email
+from agents.email_sender import send_email, send_interview_link_email, send_shortlist_offline_email, send_rejection_email
 
 pipeline_bp = Blueprint("pipeline", __name__)
 
@@ -339,6 +339,7 @@ def create_interview_link(candidate_id):
 
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
 # ── GET /api/pipeline/interview/public/<token> — No auth needed ───────────────
 @pipeline_bp.route("/interview/public/<token>", methods=["GET"])
 def get_public_interview(token):
@@ -382,6 +383,7 @@ def get_public_interview(token):
 
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
 # ── POST /api/pipeline/interview/public/<token>/submit ────────────────────────
 @pipeline_bp.route("/interview/public/<token>/submit", methods=["POST"])
 def submit_public_interview(token):
@@ -457,17 +459,43 @@ def submit_public_interview(token):
             {"score": overall_score, "decision": final_status}
         )
 
+        # ── If rejected at interview stage, send rejection email ──────────────
+        email_sent  = False
+        email_error = None
+        if final_status == "rejected":
+            email_result = send_rejection_email(
+                candidate_data=candidate,
+                job_data=job,
+                company_name=candidate.get("company_name", "RecruitMate"),
+                from_email=os.getenv("BREVO_SENDER_EMAIL"),
+                stage="interview"
+            )
+            email_sent  = email_result.get("success", False)
+            email_error = email_result.get("error") if not email_sent else None
+
+            log_pipeline(
+                candidate["company_id"],
+                str(candidate["_id"]),
+                candidate["job_id"],
+                "rejection_email",
+                "success" if email_sent else "failed",
+                email_result
+            )
+
         return jsonify({
             "success"              : True,
             "overall_score"        : overall_score,
             "hiring_recommendation": eval_data.get("hiring_recommendation"),
             "next_step"            : schedule_data.get("next_step", ""),
             "decision"             : final_status,
-            "summary"              : eval_data.get("summary", "")
+            "summary"              : eval_data.get("summary", ""),
+            "email_sent"           : email_sent,
+            "email_error"          : email_error
         }), 200
 
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
 # ── POST /api/pipeline/schedule-offline/<candidate_id> ────────────────────────
 @pipeline_bp.route("/schedule-offline/<candidate_id>", methods=["POST"])
 @jwt_required
