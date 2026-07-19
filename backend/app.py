@@ -14,7 +14,16 @@ def create_app():
     app = Flask(__name__)
 
     # ── CORS — allow React dev server ────────────────────────────────────────
-    CORS(app, resources={r"/api/*": {"origins": ["http://localhost:3000", "http://127.0.0.1:3000"]}}, supports_credentials=True)
+    # ── CORS — allow local dev + deployed frontend ───────────────────────────
+    allowed_origins = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+    frontend_url = os.getenv("FRONTEND_URL")
+    if frontend_url:
+        allowed_origins.append(frontend_url)
+
+    CORS(app, resources={r"/api/*": {"origins": allowed_origins}}, supports_credentials=True)
 
     # ── Register Blueprints ──────────────────────────────────────────────────
     app.register_blueprint(auth_bp,       url_prefix="/api/auth")
