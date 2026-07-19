@@ -8,6 +8,9 @@ from agents.email_sender import send_rejection_email
 from datetime import datetime, timezone
 from bson import ObjectId
 import os
+import csv
+import io
+from flask import Response
 
 candidates_bp = Blueprint("candidates", __name__)
 
@@ -209,6 +212,133 @@ def screen_candidate(job_id):
         "candidate_id": str(inserted.inserted_id),
         "candidate"   : candidate_doc
     }), 201
+
+# ── Utility: build a Mongo filter dict from query params ─────────────────────
+def _build_search_filter(company_id, args):
+    query = {"company_id": company_id}
+
+    skill = args.get("skill", "").strip()
+    if skill:
+        # case-insensitive partial match against matched_skills array
+        query["matched_skills"] = {"$regex": skill, "$options": "i"}
+
+    status = args.get("status", "").strip()
+    if status:
+        query["status"] = status
+
+    min_score = args.get("min_score", "").strip()
+    max_score = args.get("max_score", "").strip()
+    if min_score or max_score:
+        score_filter = {}
+        if min_score:
+            try:
+                score_filter["$gte"] = float(min_score)
+            except ValueError:
+                pass
+        if max_score:
+            try:
+                score_filter["$lte"] = float(max_score)
+            except ValueError:
+                pass
+        if score_filter:
+            query["match_score"] = score_filter
+
+    date_from = args.get("date_from", "").strip()
+    date_to   = args.get("date_to", "").strip()
+    if date_from or date_to:
+        date_filter = {}
+        if date_from:
+            try:
+                date_filter["$gte"] = datetime.fromisoformat(date_from).replace(tzinfo=timezone.utc)
+            except ValueError:
+                pass
+        if date_to:
+            try:
+                # include the whole day for date_to
+                dt = datetime.fromisoformat(date_to).replace(tzinfo=timezone.utc)
+                date_filter["$lte"] = dt.replace(hour=23, minute=59, second=59)
+            except ValueError:
+                pass
+        if date_filter:
+            query["created_at"] = date_filter
+
+    return query
+
+# ── GET /api/candidates/search — Smart search with filters ───────────────────
+@candidates_bp.route("/search", methods=["GET"])
+@jwt_required
+def search_candidates():
+    company = get_current_company()
+    query   = _build_search_filter(company["company_id"], request.args)
+
+    candidates = list(
+        candidates_collection
+        .find(query)
+        .sort("match_score", -1)
+    )
+
+    for c in candidates:
+        try:
+            job = jobs_collection.find_one({"_id": ObjectId(c["job_id"])})
+            c["job_title"] = job["job_title"] if job else c.get("job_title", "Unknown")
+        except Exception:
+            c["job_title"] = c.get("job_title", "Unknown")
+
+    return jsonify({
+        "success"   : True,
+        "candidates": [serialize_candidate(c) for c in candidates],
+        "total"     : len(candidates)
+    }), 200
+
+# ── GET /api/candidates/export — CSV export with same filters ────────────────
+@candidates_bp.route("/export", methods=["GET"])
+@jwt_required
+def export_candidates():
+    company = get_current_company()
+    query   = _build_search_filter(company["company_id"], request.args)
+
+    candidates = list(
+        candidates_collection
+        .find(query)
+        .sort("match_score", -1)
+    )
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Candidate Name", "Email", "Job Title", "Match Score",
+        "Status", "Matched Skills", "Missing Skills", "Created At"
+    ])
+
+    for c in candidates:
+        try:
+            job = jobs_collection.find_one({"_id": ObjectId(c["job_id"])})
+            job_title = job["job_title"] if job else c.get("job_title", "Unknown")
+        except Exception:
+            job_title = c.get("job_title", "Unknown")
+
+        created_at = c.get("created_at")
+        created_at_str = created_at.isoformat() if isinstance(created_at, datetime) else str(created_at or "")
+
+        writer.writerow([
+            c.get("candidate_name", ""),
+            c.get("candidate_email", ""),
+            job_title,
+            c.get("match_score", 0),
+            c.get("status", ""),
+            "; ".join(c.get("matched_skills", [])),
+            "; ".join(c.get("missing_skills", [])),
+            created_at_str
+        ])
+
+    csv_data = output.getvalue()
+    output.close()
+
+    return Response(
+        csv_data,
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=candidates_export.csv"}
+    )
 
 # ── GET /api/candidates/<job_id> — List candidates for a job ─────────────────
 @candidates_bp.route("/<job_id>", methods=["GET"])

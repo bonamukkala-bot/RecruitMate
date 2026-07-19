@@ -19,5 +19,11 @@ export const candidatesAPI = {
   getAllByJob  : (jobId)               => api.get(`/candidates/${jobId}`),
   getOne      : (candidateId)         => api.get(`/candidates/detail/${candidateId}`),
   updateStatus: (candidateId, status) => api.patch(`/candidates/detail/${candidateId}/status`, { status }),
-  delete      : (candidateId)         => api.delete(`/candidates/detail/${candidateId}`)
+  delete      : (candidateId)         => api.delete(`/candidates/detail/${candidateId}`),
+
+  // Smart Candidate Search — params: { skill, status, min_score, max_score, date_from, date_to }
+  search: (params) => api.get("/candidates/search", { params }),
+
+  // CSV export — same params as search, returns a raw file blob
+  exportCSV: (params) => api.get("/candidates/export", { params, responseType: "blob" })
 };
