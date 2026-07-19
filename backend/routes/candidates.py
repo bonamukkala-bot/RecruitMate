@@ -1,0 +1,225 @@
+from flask import Blueprint, request, jsonify
+from utils.db import candidates_collection, jobs_collection
+from utils.auth_helper import jwt_required, get_current_company
+from utils.file_extractor import extract_text_from_file
+from agents.resume_screener import screen_resume
+from agents.question_generator import generate_questions
+from datetime import datetime, timezone
+from bson import ObjectId
+
+candidates_bp = Blueprint("candidates", __name__)
+
+# ── Utility: serialize MongoDB doc ───────────────────────────────────────────
+def serialize_candidate(candidate: dict) -> dict:
+    candidate["_id"]        = str(candidate["_id"])
+    candidate["job_id"]     = str(candidate.get("job_id", ""))
+    candidate["company_id"] = str(candidate.get("company_id", ""))
+    if isinstance(candidate.get("created_at"), datetime):
+        candidate["created_at"] = candidate["created_at"].isoformat()
+    if isinstance(candidate.get("updated_at"), datetime):
+        candidate["updated_at"] = candidate["updated_at"].isoformat()
+    return candidate
+
+# ── GET /api/candidates/ — Get ALL candidates for company ─────────────────────
+@candidates_bp.route("/", methods=["GET"])
+@jwt_required
+def get_all_candidates():
+    company = get_current_company()
+
+    candidates = list(
+        candidates_collection
+        .find({"company_id": company["company_id"]})
+        .sort("created_at", -1)
+    )
+
+    # Attach job title to each candidate
+    for c in candidates:
+        try:
+            job = jobs_collection.find_one({"_id": ObjectId(c["job_id"])})
+            c["job_title"] = job["job_title"] if job else "Unknown"
+        except:
+            c["job_title"] = "Unknown"
+
+    return jsonify({
+        "success"   : True,
+        "candidates": [serialize_candidate(c) for c in candidates],
+        "total"     : len(candidates)
+    }), 200
+
+# ── POST /api/candidates/<job_id>/screen — Screen via text ───────────────────
+@candidates_bp.route("/<job_id>/screen", methods=["POST"])
+@jwt_required
+def screen_candidate(job_id):
+    company = get_current_company()
+
+    try:
+        job = jobs_collection.find_one({
+            "_id"       : ObjectId(job_id),
+            "company_id": company["company_id"]
+        })
+    except Exception:
+        return jsonify({"success": False, "error": "Invalid job ID"}), 400
+
+    if not job:
+        return jsonify({"success": False, "error": "Job not found"}), 404
+
+    # ── Handle file upload OR raw JSON ───────────────────────────────────────
+    resume_text     = None
+    candidate_name  = ""
+    candidate_email = ""
+
+    if request.content_type and "multipart/form-data" in request.content_type:
+        candidate_name  = request.form.get("candidate_name", "").strip()
+        candidate_email = request.form.get("candidate_email", "").strip()
+
+        if "resume_file" in request.files:
+            file       = request.files["resume_file"]
+            extraction = extract_text_from_file(file)
+            if not extraction["success"]:
+                return jsonify({"success": False, "error": extraction["error"]}), 400
+            resume_text = extraction["text"]
+        else:
+            resume_text = request.form.get("resume_text", "").strip()
+    else:
+        body            = request.get_json() or {}
+        candidate_name  = body.get("candidate_name", "").strip()
+        candidate_email = body.get("candidate_email", "").strip()
+        resume_text     = body.get("resume_text", "").strip()
+
+    if not resume_text:
+        return jsonify({"success": False, "error": "Resume text or file is required"}), 400
+    if not candidate_name:
+        return jsonify({"success": False, "error": "candidate_name is required"}), 400
+
+    # ── Agent 2: Screen resume ────────────────────────────────────────────────
+    screen_result = screen_resume(resume_text, job)
+    if not screen_result["success"]:
+        return jsonify({"success": False, "error": screen_result["error"]}), 500
+
+    screen_data = screen_result["data"]
+
+    # ── Agent 3: Generate questions ───────────────────────────────────────────
+    candidate_data   = {"candidate_name": candidate_name, "candidate_email": candidate_email}
+    questions_result = generate_questions(candidate_data, job, screen_data)
+    questions        = questions_result.get("data", {}).get("questions", {})
+
+    now = datetime.now(timezone.utc)
+
+    candidate_doc = {
+        "company_id"         : company["company_id"],
+        "job_id"             : job_id,
+        "job_title"          : job.get("job_title", ""),
+        "candidate_name"     : candidate_name,
+        "candidate_email"    : candidate_email,
+        "match_score"        : screen_data.get("match_score", 0),
+        "matched_skills"     : screen_data.get("matched_skills", []),
+        "missing_skills"     : screen_data.get("missing_skills", []),
+        "experience_match"   : screen_data.get("experience_match", False),
+        "recommendation"     : screen_data.get("recommendation", ""),
+        "reasoning"          : screen_data.get("reasoning", ""),
+        "interview_questions": questions,
+        "status"             : "screened",
+        "email_sent"         : False,
+        "resume_text"        : resume_text,
+        "evaluation"         : None,
+        "schedule"           : None,
+        "created_at"         : now,
+        "updated_at"         : now
+    }
+
+    inserted = candidates_collection.insert_one(candidate_doc)
+
+    jobs_collection.update_one(
+        {"_id": ObjectId(job_id)},
+        {"$inc": {"candidates_count": 1}}
+    )
+
+    candidate_doc["_id"]        = str(inserted.inserted_id)
+    candidate_doc["created_at"] = now.isoformat()
+    candidate_doc["updated_at"] = now.isoformat()
+
+    return jsonify({
+        "success"     : True,
+        "message"     : "Candidate screened successfully",
+        "candidate_id": str(inserted.inserted_id),
+        "candidate"   : candidate_doc
+    }), 201
+
+# ── GET /api/candidates/<job_id> — List candidates for a job ─────────────────
+@candidates_bp.route("/<job_id>", methods=["GET"])
+@jwt_required
+def get_candidates(job_id):
+    company = get_current_company()
+
+    candidates = list(
+        candidates_collection
+        .find({
+            "job_id"    : job_id,
+            "company_id": company["company_id"]
+        })
+        .sort("match_score", -1)
+    )
+
+    return jsonify({
+        "success"   : True,
+        "candidates": [serialize_candidate(c) for c in candidates],
+        "total"     : len(candidates)
+    }), 200
+
+# ── GET /api/candidates/detail/<candidate_id> — Get single candidate ──────────
+@candidates_bp.route("/detail/<candidate_id>", methods=["GET"])
+@jwt_required
+def get_candidate(candidate_id):
+    company = get_current_company()
+    try:
+        candidate = candidates_collection.find_one({
+            "_id"       : ObjectId(candidate_id),
+            "company_id": company["company_id"]
+        })
+        if not candidate:
+            return jsonify({"success": False, "error": "Candidate not found"}), 404
+
+        return jsonify({"success": True, "candidate": serialize_candidate(candidate)}), 200
+    except Exception:
+        return jsonify({"success": False, "error": "Invalid candidate ID"}), 400
+
+# ── PATCH /api/candidates/detail/<candidate_id>/status ───────────────────────
+@candidates_bp.route("/detail/<candidate_id>/status", methods=["PATCH"])
+@jwt_required
+def update_status(candidate_id):
+    company = get_current_company()
+    body    = request.get_json()
+    status  = body.get("status", "").strip()
+
+    valid_statuses = {"screened", "shortlisted", "invited", "hired", "rejected"}
+    if status not in valid_statuses:
+        return jsonify({"success": False, "error": f"Invalid status. Must be one of {valid_statuses}"}), 400
+
+    try:
+        result = candidates_collection.update_one(
+            {"_id": ObjectId(candidate_id), "company_id": company["company_id"]},
+            {"$set": {"status": status, "updated_at": datetime.now(timezone.utc)}}
+        )
+        if result.matched_count == 0:
+            return jsonify({"success": False, "error": "Candidate not found"}), 404
+
+        return jsonify({"success": True, "message": f"Status updated to '{status}'"}), 200
+    except Exception:
+        return jsonify({"success": False, "error": "Invalid candidate ID"}), 400
+
+# ── DELETE /api/candidates/detail/<candidate_id> ─────────────────────────────
+@candidates_bp.route("/detail/<candidate_id>", methods=["DELETE"])
+@jwt_required
+def delete_candidate(candidate_id):
+    company = get_current_company()
+    try:
+        result = candidates_collection.delete_one({
+            "_id"       : ObjectId(candidate_id),
+            "company_id": company["company_id"]
+        })
+        if result.deleted_count == 0:
+            return jsonify({"success": False, "error": "Candidate not found"}), 404
+
+        return jsonify({"success": True, "message": "Candidate deleted"}), 200
+    except Exception:
+        return jsonify({"success": False, "error": "Invalid candidate ID"}), 400
