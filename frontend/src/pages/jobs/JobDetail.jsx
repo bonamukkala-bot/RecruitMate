@@ -293,9 +293,9 @@ export default function JobDetail() {
   const fetchData = async () => {
     try {
       const [jobRes, candsRes] = await Promise.all([
-        jobsAPI.getOne(id),
-        candidatesAPI.getAll(id)
-      ]);
+  jobsAPI.getOne(id),
+  candidatesAPI.getAllByJob(id)
+]);
       setJob(jobRes.data.job);
       setCandidates(candsRes.data.candidates || []);
     } catch {
