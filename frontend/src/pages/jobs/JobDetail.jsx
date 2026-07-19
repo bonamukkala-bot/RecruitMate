@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft, Briefcase, MapPin, Clock,
   Users, Plus, CheckCircle, XCircle,
-  Star, ChevronRight, Trash2
+  Star, ChevronRight, Trash2, GitCompare
 } from "lucide-react";
 import { jobsAPI } from "../../api/jobs";
 import { candidatesAPI } from "../../api/candidates";
@@ -13,6 +13,8 @@ import Modal from "../../components/ui/Modal";
 import Input from "../../components/ui/Input";
 import LoadingSpinner from "../../components/ui/LoadingSpinner";
 import toast from "react-hot-toast";
+
+const MAX_COMPARE = 3;
 
 // ── Screen Candidate Modal ────────────────────────────────────────────────────
 function ScreenCandidateModal({ isOpen, onClose, jobId, onScreened }) {
@@ -192,7 +194,7 @@ function ScreenCandidateModal({ isOpen, onClose, jobId, onScreened }) {
 }
 
 // ── Candidate Row ─────────────────────────────────────────────────────────────
-function CandidateRow({ candidate, onDelete, onClick }) {
+function CandidateRow({ candidate, onDelete, onClick, selected, onToggleSelect }) {
   const [deleting, setDeleting] = useState(false);
 
   const scoreColor = candidate.match_score >= 70
@@ -219,9 +221,21 @@ function CandidateRow({ candidate, onDelete, onClick }) {
   return (
     <div
       onClick={onClick}
-      className="flex items-center justify-between p-4 rounded-xl bg-dark-800/50 border border-dark-800 hover:border-dark-700 cursor-pointer transition-all group"
+      className={`flex items-center justify-between p-4 rounded-xl bg-dark-800/50 border cursor-pointer transition-all group ${
+        selected ? "border-primary-600 ring-1 ring-primary-600/40" : "border-dark-800 hover:border-dark-700"
+      }`}
     >
       <div className="flex items-center gap-4">
+        {/* Compare checkbox */}
+        <div onClick={(e) => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={() => onToggleSelect(candidate._id)}
+            className="w-4 h-4 rounded border-dark-600 bg-dark-800 text-primary-600 focus:ring-primary-600 cursor-pointer"
+          />
+        </div>
+
         {/* Avatar */}
         <div className="w-10 h-10 rounded-full bg-primary-600/20 flex items-center justify-center text-primary-400 font-bold text-sm">
           {candidate.candidate_name?.charAt(0).toUpperCase()}
@@ -285,6 +299,7 @@ export default function JobDetail() {
   const [candidates, setCandidates]= useState([]);
   const [loading,    setLoading]   = useState(true);
   const [showModal,  setShowModal] = useState(false);
+  const [selected,   setSelected]  = useState([]);
 
   useEffect(() => {
     fetchData();
@@ -312,6 +327,28 @@ export default function JobDetail() {
 
   const handleDelete = (id) => {
     setCandidates(prev => prev.filter(c => c._id !== id));
+    setSelected(prev => prev.filter(cid => cid !== id));
+  };
+
+  const toggleSelect = (candidateId) => {
+    setSelected((prev) => {
+      if (prev.includes(candidateId)) {
+        return prev.filter((cid) => cid !== candidateId);
+      }
+      if (prev.length >= MAX_COMPARE) {
+        toast.error(`You can compare up to ${MAX_COMPARE} candidates at a time`);
+        return prev;
+      }
+      return [...prev, candidateId];
+    });
+  };
+
+  const handleCompare = () => {
+    if (selected.length < 2) {
+      toast.error("Select at least 2 candidates to compare");
+      return;
+    }
+    navigate(`/candidates/compare?ids=${selected.join(",")}`);
   };
 
   if (loading) {
@@ -400,13 +437,15 @@ export default function JobDetail() {
               </Button>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-3 pb-16">
               {candidates.map((c) => (
                 <CandidateRow
                   key={c._id}
                   candidate={c}
                   onDelete={handleDelete}
                   onClick={() => navigate(`/candidates/${c._id}`)}
+                  selected={selected.includes(c._id)}
+                  onToggleSelect={toggleSelect}
                 />
               ))}
             </div>
@@ -464,6 +503,28 @@ export default function JobDetail() {
         jobId={id}
         onScreened={handleScreened}
       />
+
+      {/* Floating compare bar */}
+      {selected.length >= 2 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-dark-800 border border-dark-700 rounded-xl shadow-2xl px-5 py-3 flex items-center gap-4">
+          <span className="text-sm text-dark-200">
+            {selected.length} candidate{selected.length !== 1 ? "s" : ""} selected
+          </span>
+          <button
+            onClick={handleCompare}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-primary-600 text-white hover:bg-primary-700 transition-all"
+          >
+            <GitCompare size={14} />
+            Compare
+          </button>
+          <button
+            onClick={() => setSelected([])}
+            className="text-dark-400 hover:text-white text-sm"
+          >
+            Clear
+          </button>
+        </div>
+      )}
     </div>
   );
 }

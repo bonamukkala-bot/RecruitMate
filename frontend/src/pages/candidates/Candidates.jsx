@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Users, Search, CheckCircle, XCircle, Filter, SlidersHorizontal, Download, X
+  Users, Search, CheckCircle, XCircle, Filter, SlidersHorizontal, Download, X, GitCompare
 } from "lucide-react";
 import { candidatesAPI } from "../../api/candidates";
 import Badge from "../../components/ui/Badge";
@@ -10,6 +10,7 @@ import LoadingSpinner from "../../components/ui/LoadingSpinner";
 import toast from "react-hot-toast";
 
 const STATUS_FILTERS = ["all", "screened", "shortlisted", "invited", "hired", "rejected"];
+const MAX_COMPARE = 3;
 
 export default function Candidates() {
   const [candidates, setCandidates] = useState([]);
@@ -17,6 +18,7 @@ export default function Candidates() {
   const [loading,    setLoading]    = useState(true);
   const [search,     setSearch]     = useState("");
   const [status,     setStatus]     = useState("all");
+  const [selected,   setSelected]   = useState([]);
   const navigate                    = useNavigate();
 
   // ── Advanced filters (skill / score range / date range) ────────────────────
@@ -111,6 +113,33 @@ export default function Candidates() {
     } finally {
       setExporting(false);
     }
+  };
+
+  const toggleSelect = (candidateId) => {
+    setSelected((prev) => {
+      if (prev.includes(candidateId)) {
+        return prev.filter((id) => id !== candidateId);
+      }
+      if (prev.length >= MAX_COMPARE) {
+        toast.error(`You can compare up to ${MAX_COMPARE} candidates at a time`);
+        return prev;
+      }
+      return [...prev, candidateId];
+    });
+  };
+
+  const handleCompare = () => {
+    if (selected.length < 2) {
+      toast.error("Select at least 2 candidates to compare");
+      return;
+    }
+    const selectedCandidates = candidates.filter((c) => selected.includes(c._id));
+    const jobIds = new Set(selectedCandidates.map((c) => c.job_id));
+    if (jobIds.size > 1) {
+      toast.error("You can only compare candidates applying to the same job");
+      return;
+    }
+    navigate(`/candidates/compare?ids=${selected.join(",")}`);
   };
 
   if (loading) {
@@ -265,6 +294,7 @@ export default function Candidates() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-dark-800 text-dark-400 text-xs uppercase tracking-wider">
+                <th className="text-left font-medium px-4 py-4 w-10"></th>
                 <th className="text-left font-medium px-6 py-4">Candidate</th>
                 <th className="text-left font-medium px-6 py-4">Job</th>
                 <th className="text-center font-medium px-6 py-4">Match Score</th>
@@ -279,6 +309,14 @@ export default function Candidates() {
                   onClick={() => navigate(`/candidates/${c._id}`)}
                   className="border-b border-dark-800/60 hover:bg-dark-800/40 cursor-pointer transition-all"
                 >
+                  <td className="px-4 py-4" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={selected.includes(c._id)}
+                      onChange={() => toggleSelect(c._id)}
+                      className="w-4 h-4 rounded border-dark-600 bg-dark-800 text-primary-600 focus:ring-primary-600 cursor-pointer"
+                    />
+                  </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-3">
                       <div className="w-9 h-9 rounded-full bg-primary-600/20 flex items-center justify-center text-primary-400 font-bold text-xs shrink-0">
@@ -320,6 +358,28 @@ export default function Candidates() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Floating compare bar */}
+      {selected.length >= 2 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-dark-800 border border-dark-700 rounded-xl shadow-2xl px-5 py-3 flex items-center gap-4">
+          <span className="text-sm text-dark-200">
+            {selected.length} candidate{selected.length !== 1 ? "s" : ""} selected
+          </span>
+          <button
+            onClick={handleCompare}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-primary-600 text-white hover:bg-primary-700 transition-all"
+          >
+            <GitCompare size={14} />
+            Compare
+          </button>
+          <button
+            onClick={() => setSelected([])}
+            className="text-dark-400 hover:text-white text-sm"
+          >
+            Clear
+          </button>
         </div>
       )}
     </div>

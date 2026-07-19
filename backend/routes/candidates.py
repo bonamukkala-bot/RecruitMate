@@ -5,6 +5,7 @@ from utils.file_extractor import extract_text_from_file
 from agents.resume_screener import screen_resume
 from agents.question_generator import generate_questions
 from agents.email_sender import send_rejection_email
+from agents.candidate_comparator import compare_candidates
 from datetime import datetime, timezone
 from bson import ObjectId
 import os
@@ -339,6 +340,76 @@ def export_candidates():
         mimetype="text/csv",
         headers={"Content-Disposition": "attachment; filename=candidates_export.csv"}
     )
+
+# ── POST /api/candidates/compare — Candidate Comparison Tool ─────────────────
+@candidates_bp.route("/compare", methods=["POST"])
+@jwt_required
+def compare_candidates_route():
+    company = get_current_company()
+    body    = request.get_json() or {}
+
+    candidate_ids = body.get("candidate_ids", [])
+
+    if not isinstance(candidate_ids, list) or len(candidate_ids) < 2:
+        return jsonify({"success": False, "error": "Provide at least 2 candidate_ids to compare"}), 400
+    if len(candidate_ids) > 3:
+        return jsonify({"success": False, "error": "A maximum of 3 candidates can be compared at once"}), 400
+
+    try:
+        candidates = []
+        job_id     = None
+
+        for cid in candidate_ids:
+            candidate = candidates_collection.find_one({
+                "_id"       : ObjectId(cid),
+                "company_id": company["company_id"]
+            })
+            if not candidate:
+                return jsonify({"success": False, "error": f"Candidate {cid} not found"}), 404
+
+            candidate["_id"] = str(candidate["_id"])
+            candidates.append(candidate)
+
+            # All candidates being compared should be for the same job
+            if job_id is None:
+                job_id = candidate.get("job_id")
+            elif candidate.get("job_id") != job_id:
+                return jsonify({
+                    "success": False,
+                    "error"  : "All candidates being compared must be for the same job"
+                }), 400
+
+        job = jobs_collection.find_one({"_id": ObjectId(job_id)}) if job_id else {}
+
+        result = compare_candidates(candidates, job or {})
+
+        if not result["success"]:
+            return jsonify(result), 500
+
+        # Attach basic candidate summary info so the frontend doesn't need a second fetch
+        summary = [
+            {
+                "_id"            : c["_id"],
+                "candidate_name" : c.get("candidate_name"),
+                "candidate_email": c.get("candidate_email"),
+                "match_score"    : c.get("match_score", 0),
+                "matched_skills" : c.get("matched_skills", []),
+                "missing_skills" : c.get("missing_skills", []),
+                "status"         : c.get("status"),
+                "interview_score": (c.get("evaluation") or {}).get("overall_score")
+            }
+            for c in candidates
+        ]
+
+        return jsonify({
+            "success"   : True,
+            "job_title" : job.get("job_title", "") if job else "",
+            "candidates": summary,
+            "comparison": result["data"]
+        }), 200
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 # ── GET /api/candidates/<job_id> — List candidates for a job ─────────────────
 @candidates_bp.route("/<job_id>", methods=["GET"])

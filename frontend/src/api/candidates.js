@@ -25,5 +25,8 @@ export const candidatesAPI = {
   search: (params) => api.get("/candidates/search", { params }),
 
   // CSV export — same params as search, returns a raw file blob
-  exportCSV: (params) => api.get("/candidates/export", { params, responseType: "blob" })
+  exportCSV: (params) => api.get("/candidates/export", { params, responseType: "blob" }),
+
+  // Candidate Comparison Tool — pass 2-3 candidate ids
+  compare: (candidateIds) => api.post("/candidates/compare", { candidate_ids: candidateIds })
 };

@@ -11,6 +11,7 @@ import Jobs from "./pages/jobs/Jobs";
 import JobDetail from "./pages/jobs/JobDetail";
 import Candidates from "./pages/candidates/Candidates";
 import CandidateDetail from "./pages/candidates/CandidateDetail";
+import CandidateComparison from "./pages/candidates/CandidateComparison";
 import Pipeline from "./pages/pipeline/Pipeline";
 import InterviewPortal from "./pages/interview/InterviewPortal";
 import Analytics from "./pages/analytics/Analytics";
@@ -73,6 +74,7 @@ export default function App() {
             <Route path="jobs"            element={<Jobs />} />
             <Route path="jobs/:id"        element={<JobDetail />} />
             <Route path="candidates"      element={<Candidates />} />
+            <Route path="candidates/compare" element={<CandidateComparison />} />
             <Route path="candidates/:id"  element={<CandidateDetail />} />
             <Route path="pipeline" element={<Pipeline />} />
           </Route>
