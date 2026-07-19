@@ -556,3 +556,157 @@ def schedule_offline_interview(candidate_id):
 
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
+# ── GET /api/pipeline/heatmap/jobs — list jobs that have at least one completed interview ─
+@pipeline_bp.route("/heatmap/jobs", methods=["GET"])
+@jwt_required
+def get_heatmap_jobs():
+    company    = get_current_company()
+    company_id = company["company_id"]
+
+    # Distinct job_ids among candidates with completed interviews for this company
+    job_ids = candidates_collection.distinct(
+        "job_id",
+        {
+            "company_id"      : company_id,
+            "interview_status": "completed",
+            "evaluation"      : {"$exists": True, "$ne": None}
+        }
+    )
+
+    jobs_out = []
+    for jid in job_ids:
+        try:
+            job = jobs_collection.find_one({"_id": ObjectId(jid)})
+        except Exception:
+            job = None
+        if job:
+            count = candidates_collection.count_documents({
+                "company_id"      : company_id,
+                "job_id"          : jid,
+                "interview_status": "completed",
+                "evaluation"      : {"$exists": True, "$ne": None}
+            })
+            jobs_out.append({
+                "job_id"    : str(jid),
+                "job_title" : job.get("job_title", "Untitled Job"),
+                "interviews": count
+            })
+
+    jobs_out.sort(key=lambda x: x["job_title"].lower())
+
+    return jsonify({
+        "success": True,
+        "jobs"   : jobs_out
+    }), 200
+
+# ── GET /api/pipeline/heatmap — Interview performance heatmap (scoped to one job) ─────
+@pipeline_bp.route("/heatmap", methods=["GET"])
+@jwt_required
+def get_heatmap():
+    company    = get_current_company()
+    company_id = company["company_id"]
+
+    job_id = request.args.get("job_id")
+    if not job_id:
+        return jsonify({
+            "success": False,
+            "error"  : "job_id query param is required. Call /api/pipeline/heatmap/jobs to list available jobs."
+        }), 400
+
+    job = jobs_collection.find_one({"_id": ObjectId(job_id)})
+    if not job:
+        return jsonify({"success": False, "error": "Job not found"}), 404
+
+    # Get candidates with completed interviews FOR THIS JOB ONLY
+    candidates = list(candidates_collection.find({
+        "company_id"      : company_id,
+        "job_id"          : job_id,
+        "interview_status": "completed",
+        "evaluation"      : {"$exists": True, "$ne": None}
+    }))
+
+    if not candidates:
+        return jsonify({
+            "success"         : True,
+            "job_id"          : job_id,
+            "job_title"       : job.get("job_title", ""),
+            "total_interviews": 0,
+            "question_stats"  : [],
+            "skill_gaps"      : [],
+            "avg_score"       : 0,
+            "pass_rate"       : 0
+        }), 200
+
+    # ── Per question analysis ─────────────────────────────────────────────────
+    question_scores = {}
+    for candidate in candidates:
+        eval_data   = candidate.get("evaluation", {})
+        per_question = eval_data.get("per_question", [])
+        for qa in per_question:
+            q_text = qa.get("question", "")[:80]
+            score  = qa.get("score", 0)
+            if q_text not in question_scores:
+                question_scores[q_text] = []
+            question_scores[q_text].append(score)
+
+    # Build question stats sorted by avg score (weakest first)
+    question_stats = []
+    for q_text, scores in question_scores.items():
+        avg = round(sum(scores) / len(scores), 1)
+        question_stats.append({
+            "question"   : q_text,
+            "avg_score"  : avg,
+            "attempts"   : len(scores),
+            "min_score"  : min(scores),
+            "max_score"  : max(scores),
+            "pass_rate"  : round(sum(1 for s in scores if s >= 70) / len(scores) * 100, 1),
+            "difficulty" : "Hard" if avg < 50 else "Medium" if avg < 70 else "Easy"
+        })
+
+    question_stats.sort(key=lambda x: x["avg_score"])
+
+    # ── Skill gap analysis (also scoped to this job's candidates) ────────────
+    skill_fail_count   = {}
+    skill_total_count  = {}
+    for candidate in candidates:
+        missing = candidate.get("missing_skills", [])
+        matched = candidate.get("matched_skills", [])
+        for skill in missing:
+            skill_fail_count[skill]  = skill_fail_count.get(skill, 0) + 1
+            skill_total_count[skill] = skill_total_count.get(skill, 0) + 1
+        for skill in matched:
+            skill_total_count[skill] = skill_total_count.get(skill, 0) + 1
+
+    skill_gaps = []
+    for skill, fail_count in skill_fail_count.items():
+        total = skill_total_count.get(skill, fail_count)
+        skill_gaps.append({
+            "skill"     : skill,
+            "gap_rate"  : round(fail_count / total * 100, 1),
+            "fail_count": fail_count,
+            "total"     : total
+        })
+    skill_gaps.sort(key=lambda x: x["gap_rate"], reverse=True)
+
+    # ── Overall stats ─────────────────────────────────────────────────────────
+    all_scores = [
+        c.get("evaluation", {}).get("overall_score", 0)
+        for c in candidates
+        if c.get("evaluation")
+    ]
+    avg_score  = round(sum(all_scores) / len(all_scores), 1) if all_scores else 0
+    pass_rate  = round(
+        sum(1 for s in all_scores if s >= 70) / len(all_scores) * 100, 1
+    ) if all_scores else 0
+
+    return jsonify({
+        "success"         : True,
+        "job_id"          : job_id,
+        "job_title"       : job.get("job_title", ""),
+        "total_interviews": len(candidates),
+        "question_stats"  : question_stats[:10],  # top 10 weakest
+        "skill_gaps"      : skill_gaps[:8],
+        "avg_score"       : avg_score,
+        "pass_rate"       : pass_rate
+    }), 200

@@ -1,22 +1,14 @@
 import { NavLink, useNavigate } from "react-router-dom";
-import {
-  LayoutDashboard,
-  Briefcase,
-  Users,
-  GitBranch,
-  BarChart2,
-  LogOut,
-  Bot
-} from "lucide-react";
+import { LayoutDashboard, Briefcase, Users, GitBranch, BarChart2, Flame, LogOut, Bot } from "lucide-react"
 import { useAuth } from "../../context/AuthContext";
 import clsx from "clsx";
-
 const navItems = [
   { label: "Dashboard",  icon: LayoutDashboard, path: "/dashboard"  },
   { label: "Jobs",       icon: Briefcase,        path: "/jobs"       },
   { label: "Candidates", icon: Users,            path: "/candidates" },
   { label: "Pipeline",   icon: GitBranch,        path: "/pipeline"   },
-  { label: "Analytics",  icon: BarChart2,        path: "/analytics"  }
+  { label: "Analytics",  icon: BarChart2,        path: "/analytics"  },
+  { label: "Heatmap",    icon: Flame,            path: "/heatmap"    }
 ];
 
 export default function Sidebar() {

@@ -15,6 +15,7 @@ import CandidateComparison from "./pages/candidates/CandidateComparison";
 import Pipeline from "./pages/pipeline/Pipeline";
 import InterviewPortal from "./pages/interview/InterviewPortal";
 import Analytics from "./pages/analytics/Analytics";
+import Heatmap from "./pages/analytics/Heatmap";
 
 // ── Protected Route ───────────────────────────────────────────────────────────
 function ProtectedRoute({ children }) {
@@ -82,6 +83,7 @@ export default function App() {
           {/* Fallback */}
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
           <Route path="analytics" element={<Analytics />} />
+          <Route path="heatmap" element={<Heatmap />} />
         </Routes>
       </AuthProvider>
     </BrowserRouter>
