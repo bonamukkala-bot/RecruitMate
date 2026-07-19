@@ -1,3 +1,5 @@
+import token
+
 from flask import Blueprint, request, jsonify
 from utils.db import candidates_collection, jobs_collection, pipeline_collection
 from utils.auth_helper import jwt_required, get_current_company
@@ -312,7 +314,8 @@ def create_interview_link(candidate_id):
             }}
         )
 
-        interview_url = f"http://localhost:3000/interview/{token}"
+        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+        interview_url = f"{frontend_url}/interview/{token}"
 
         # Auto-send the interview invitation email to the candidate
         email_result = send_interview_link_email(
