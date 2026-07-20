@@ -3,7 +3,8 @@ import { useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft, Star, CheckCircle, XCircle,
   Mail, Brain, Calendar, MessageSquare,
-  ChevronDown, ChevronUp, Zap, Video, Copy
+  ChevronDown, ChevronUp, Zap, Video, Copy,
+  ShieldAlert, AlertTriangle, Ban
 } from "lucide-react";
 import { candidatesAPI } from "../../api/candidates";
 import { pipelineAPI } from "../../api/pipeline";
@@ -35,6 +36,86 @@ function ScoreRing({ score }) {
         <p className="text-2xl font-bold text-white">{score}</p>
         <p className="text-xs text-dark-400">/ 100</p>
       </div>
+    </div>
+  );
+}
+
+// ── Integrity flag labels + icon colors, mirrors InterviewPortal.jsx's VIOLATION_LABELS ─
+const INTEGRITY_LABELS = {
+  tab_switch       : "Switched away from the tab",
+  window_blur      : "Switched away from the window",
+  fullscreen_exit  : "Exited full-screen mode",
+  phone_detected   : "Phone detected on camera",
+  no_face          : "No face detected on camera",
+  multiple_faces   : "Multiple faces detected on camera",
+  identity_mismatch: "Identity mismatch — face didn't match verified reference"
+};
+
+function formatElapsed(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+// ── Integrity Panel ───────────────────────────────────────────────────────────
+function IntegrityPanel({ candidate }) {
+  const log        = candidate.integrity_log || [];
+  const terminated = candidate.terminated;
+
+  if (!terminated && log.length === 0) {
+    return (
+      <div className="card border-green-600/20 bg-green-600/5 flex items-center gap-3">
+        <CheckCircle size={20} className="text-green-400 shrink-0" />
+        <div>
+          <p className="text-sm font-semibold text-white">Clean interview</p>
+          <p className="text-xs text-dark-400">No integrity flags were raised during this interview.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`card space-y-4 ${terminated ? "border-red-600/30 bg-red-600/5" : "border-yellow-500/20 bg-yellow-500/5"}`}>
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold text-white flex items-center gap-2">
+          {terminated
+            ? <Ban size={16} className="text-red-400" />
+            : <ShieldAlert size={16} className="text-yellow-400" />
+          }
+          Interview Integrity
+        </h3>
+        <span className={`text-xs px-2 py-0.5 rounded-md border ${
+          terminated
+            ? "bg-red-500/10 text-red-400 border-red-500/20"
+            : "bg-yellow-500/10 text-yellow-400 border-yellow-500/20"
+        }`}>
+          {terminated ? "Terminated" : `${log.length} flag${log.length === 1 ? "" : "s"}`}
+        </span>
+      </div>
+
+      {terminated && (
+        <div className="p-3 bg-dark-800 rounded-lg border border-red-500/20">
+          <p className="text-xs text-dark-400 mb-1">Termination reason</p>
+          <p className="text-sm text-red-300">{candidate.termination_reason}</p>
+        </div>
+      )}
+
+      {log.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs font-semibold text-dark-400 uppercase tracking-wider">Timeline</p>
+          {log.map((flag, i) => (
+            <div key={i} className="flex items-center gap-3 p-2.5 bg-dark-800 rounded-lg border border-dark-700">
+              <AlertTriangle size={14} className="text-yellow-400 shrink-0" />
+              <p className="text-sm text-dark-300 flex-1">
+                {INTEGRITY_LABELS[flag.type] || flag.type}
+              </p>
+              <span className="text-xs text-dark-500 font-mono shrink-0">
+                {formatElapsed(flag.at_seconds)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -321,6 +402,7 @@ export default function CandidateDetail() {
   if (!candidate) return null;
 
   const eval_data = candidate.evaluation;
+  const hasInterviewData = candidate.interview_status === "completed";
 
   return (
     <div className="space-y-6">
@@ -428,6 +510,9 @@ export default function CandidateDetail() {
           </div>
         </div>
       </div>
+
+      {/* Integrity panel — only shown once the voice interview has actually run */}
+      {hasInterviewData && <IntegrityPanel candidate={candidate} />}
 
       {/* Needs offline scheduling */}
       {candidate.schedule_pending && (

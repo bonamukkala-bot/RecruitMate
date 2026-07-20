@@ -241,8 +241,7 @@ export default function InterviewPortal() {
     setFlagCount(integrityLogRef.current.length);
     return elapsedSeconds;
   }, []);
-
-  // ── Terminate the interview immediately (2nd strike, or identity mismatch) ─
+// ── Terminate the interview immediately (2nd strike, or identity mismatch) ─
   const terminateInterview = useCallback(async (reason) => {
     if (stageRef.current === STAGE.TERMINATED || stageRef.current === STAGE.RESULT) return;
 
@@ -268,7 +267,8 @@ export default function InterviewPortal() {
       await axios.post(`${API}/pipeline/interview/public/${token}/submit`, {
         qa_pairs: answersRef.current,
         terminated: true,
-        termination_reason: reason
+        termination_reason: reason,
+        integrity_log: integrityLogRef.current
       });
     } catch (err) {
       // Swallow — candidate still sees the Terminated screen either way.
@@ -618,8 +618,7 @@ export default function InterviewPortal() {
       }, 1000);
     }
   }, [transcript, answers, currentQ, interview, speak, askQuestion]);
-
-  // ── Submit interview ──────────────────────────────────────────────────────
+// ── Submit interview ──────────────────────────────────────────────────────
   const submitInterview = async (finalAnswers) => {
     setStage(STAGE.SUBMITTING);
 
@@ -635,7 +634,7 @@ export default function InterviewPortal() {
     try {
       const res = await axios.post(
         `${API}/pipeline/interview/public/${token}/submit`,
-        { qa_pairs: finalAnswers }
+        { qa_pairs: finalAnswers, integrity_log: integrityLogRef.current }
       );
       if (res.data.success) {
         setResult(res.data);

@@ -383,7 +383,6 @@ def get_public_interview(token):
 
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
-
 # ── POST /api/pipeline/interview/public/<token>/submit ────────────────────────
 @pipeline_bp.route("/interview/public/<token>/submit", methods=["POST"])
 def submit_public_interview(token):
@@ -395,13 +394,47 @@ def submit_public_interview(token):
         if candidate.get("interview_status") == "completed":
             return jsonify({"success": False, "error": "Already submitted"}), 400
 
-        body     = request.get_json()
-        qa_pairs = body.get("qa_pairs", [])
+        body           = request.get_json()
+        qa_pairs       = body.get("qa_pairs", [])
+        integrity_log  = body.get("integrity_log", [])
+        terminated     = body.get("terminated", False)
+        termination_reason = body.get("termination_reason")
 
-        if not qa_pairs:
+        if not qa_pairs and not terminated:
             return jsonify({"success": False, "error": "No answers provided"}), 400
 
         job = jobs_collection.find_one({"_id": ObjectId(candidate["job_id"])})
+
+        # ── Terminated: skip evaluation entirely, save as-is ──────────────────
+        if terminated:
+            candidates_collection.update_one(
+                {"interview_token": token},
+                {"$set": {
+                    "interview_status"   : "completed",
+                    "interview_answers"  : qa_pairs,
+                    "integrity_log"      : integrity_log,
+                    "terminated"         : True,
+                    "termination_reason" : termination_reason,
+                    "status"             : "terminated",
+                    "schedule_pending"   : False,
+                    "updated_at"         : datetime.now(timezone.utc)
+                }}
+            )
+
+            log_pipeline(
+                candidate["company_id"],
+                str(candidate["_id"]),
+                candidate["job_id"],
+                "voice_interview_terminated",
+                "success",
+                {"reason": termination_reason, "flags": len(integrity_log)}
+            )
+
+            return jsonify({
+                "success"   : True,
+                "decision"  : "terminated",
+                "summary"   : termination_reason
+            }), 200
 
         # ── Agent 5: Auto evaluate ────────────────────────────────────────────
         eval_result = evaluate_answers(
@@ -442,6 +475,8 @@ def submit_public_interview(token):
             {"$set": {
                 "interview_status"  : "completed",
                 "interview_answers" : qa_pairs,
+                "integrity_log"     : integrity_log,
+                "terminated"        : False,
                 "evaluation"        : eval_data,
                 "schedule"          : schedule_data,
                 "status"            : final_status,
