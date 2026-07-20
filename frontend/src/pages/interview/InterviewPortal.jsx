@@ -3,11 +3,17 @@ import { useParams } from "react-router-dom";
 import {
   Mic, MicOff, Volume2, ChevronRight,
   CheckCircle, XCircle, Loader, Bot,
-  AlertCircle, Trophy, Clock
+  AlertCircle, Trophy, Clock, Camera, ShieldAlert
 } from "lucide-react";
 import axios from "axios";
+import * as faceapi from "@vladmandic/face-api";
+import * as tf from "@tensorflow/tfjs";
+import * as cocoSsd from "@tensorflow-models/coco-ssd";
 
 const API = process.env.REACT_APP_API_URL || "http://127.0.0.1:5000/api";
+
+// Public CDN hosting pretrained face-api.js model weights — no local files needed
+const FACE_MODEL_URL = "https://justadudewhohacks.github.io/face-api.js/models";
 
 // ── Stages ────────────────────────────────────────────────────────────────────
 const STAGE = {
@@ -89,10 +95,44 @@ export default function InterviewPortal() {
   const [error,     setError]    = useState("");
   const [timeLeft,  setTimeLeft] = useState(120); // 2 min per question
 
-  const synthRef   = useRef(window.speechSynthesis);
-  const recognRef  = useRef(null);
-  const timerRef   = useRef(null);
-  const hasSpoken  = useRef(false);
+  // ── Integrity monitoring state ────────────────────────────────────────────
+  const [cameraReady,    setCameraReady]    = useState(false);
+  const [cameraError,    setCameraError]    = useState("");
+  const [modelsLoading,  setModelsLoading]  = useState(true);
+  const [faceStatus,     setFaceStatus]     = useState("checking"); // checking | ok | no_face | multiple_faces | phone_detected
+  const [flagCount,      setFlagCount]      = useState(0);
+
+  const cocoModelRef = useRef(null);
+
+  const synthRef      = useRef(window.speechSynthesis);
+  const recognRef      = useRef(null);
+  const timerRef       = useRef(null);
+  const videoRef       = useRef(null);
+  const streamRef       = useRef(null);
+  const detectionRef    = useRef(null);
+  const integrityLogRef = useRef([]); // { type, at_seconds }
+  const interviewStartRef = useRef(null);
+
+  // ── Load face-api + coco-ssd models once on mount ─────────────────────────
+  useEffect(() => {
+    const loadModels = async () => {
+      try {
+        await faceapi.nets.tinyFaceDetector.loadFromUri(FACE_MODEL_URL);
+      } catch (err) {
+        console.error("Failed to load face detection models:", err);
+        // don't block the interview if face models fail to load
+      }
+      try {
+        await tf.ready();
+        cocoModelRef.current = await cocoSsd.load({ base: "lite_mobilenet_v2" });
+      } catch (err) {
+        console.error("Failed to load phone detection model:", err);
+        // don't block the interview if the object detection model fails to load
+      }
+      setModelsLoading(false);
+    };
+    loadModels();
+  }, []);
 
   // ── Load interview data ───────────────────────────────────────────────────
   useEffect(() => {
@@ -113,6 +153,114 @@ export default function InterviewPortal() {
     };
     load();
   }, [token]);
+
+  // ── Start camera (called when candidate clicks Start Interview) ──────────
+  const startCamera = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 320, height: 240 },
+        audio: false
+      });
+      streamRef.current = stream;
+      // NOTE: we do NOT try to attach the stream to videoRef.current here.
+      // At this point (called from the Intro screen) the <video> element
+      // doesn't exist in the DOM yet — it only renders once we leave the
+      // intro stage. Attaching happens in the useEffect below, which runs
+      // AFTER the video element has actually mounted.
+      setCameraReady(true);
+      setCameraError("");
+      return true;
+    } catch (err) {
+      setCameraError("Camera access denied or unavailable. The interview will continue without integrity monitoring.");
+      setCameraReady(false);
+      return false;
+    }
+  }, []);
+
+  // ── Attach the already-acquired camera stream to the <video> element ─────
+  // once it exists in the DOM (i.e. once we've left the Intro stage).
+  useEffect(() => {
+    if (cameraReady && streamRef.current && videoRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      // Some browsers need an explicit play() call even with autoPlay set,
+      // especially right after srcObject is assigned imperatively.
+      videoRef.current.play().catch(() => {
+        // Autoplay can be blocked in rare cases; the preview will just stay
+        // paused, but detection can still work once metadata loads.
+      });
+    }
+  }, [cameraReady, stage]);
+
+  // ── Log an integrity flag (deduped so we don't spam every 2s while ongoing) ─
+  const logFlag = useCallback((type) => {
+    const elapsedSeconds = interviewStartRef.current
+      ? Math.round((Date.now() - interviewStartRef.current) / 1000)
+      : 0;
+    integrityLogRef.current.push({ type, at_seconds: elapsedSeconds });
+    setFlagCount(integrityLogRef.current.length);
+  }, []);
+
+  // ── Face + phone detection loop (runs every 2s once camera + models ready) ─
+  useEffect(() => {
+    if (!cameraReady || modelsLoading) return;
+
+    let lastStatus = "ok";
+    let consecutiveNoFace = 0;
+
+    detectionRef.current = setInterval(async () => {
+      if (!videoRef.current || videoRef.current.readyState !== 4) return;
+
+      try {
+        // ── Phone check first — if a phone is visible, that's the most
+        // important integrity signal regardless of face state ─────────────
+        if (cocoModelRef.current) {
+          const objects = await cocoModelRef.current.detect(videoRef.current);
+          const phoneVisible = objects.some(
+            (o) => o.class === "cell phone" && o.score > 0.5
+          );
+          if (phoneVisible) {
+            setFaceStatus("phone_detected");
+            if (lastStatus !== "phone_detected") {
+              logFlag("phone_detected");
+              lastStatus = "phone_detected";
+            }
+            return; // skip face check this cycle, phone flag takes priority
+          }
+        }
+
+        const detections = await faceapi.detectAllFaces(
+          videoRef.current,
+          new faceapi.TinyFaceDetectorOptions()
+        );
+
+        if (detections.length === 0) {
+          consecutiveNoFace += 1;
+          setFaceStatus("no_face");
+          // Only flag after ~6 seconds of no face (3 checks), to avoid false positives
+          // from brief head turns or camera hiccups
+          if (consecutiveNoFace === 3 && lastStatus !== "no_face_flagged") {
+            logFlag("no_face");
+            lastStatus = "no_face_flagged";
+          }
+        } else if (detections.length > 1) {
+          consecutiveNoFace = 0;
+          setFaceStatus("multiple_faces");
+          if (lastStatus !== "multiple_faces") {
+            logFlag("multiple_faces");
+            lastStatus = "multiple_faces";
+          }
+        } else {
+          consecutiveNoFace = 0;
+          setFaceStatus("ok");
+          lastStatus = "ok";
+        }
+      } catch (err) {
+        // Detection errors shouldn't interrupt the interview
+      }
+    }, 2000);
+
+    return () => clearInterval(detectionRef.current);
+  }, [cameraReady, modelsLoading, logFlag]);
 
   // ── Speech synthesis ──────────────────────────────────────────────────────
   const speak = useCallback((text, onEnd) => {
@@ -243,10 +391,19 @@ export default function InterviewPortal() {
   // ── Submit interview ──────────────────────────────────────────────────────
   const submitInterview = async (finalAnswers) => {
     setStage(STAGE.SUBMITTING);
+
+    // Stop camera + detection once the interview is over
+    clearInterval(detectionRef.current);
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+    }
+
     try {
       const res = await axios.post(
         `${API}/pipeline/interview/public/${token}/submit`,
         { qa_pairs: finalAnswers }
+        // NOTE: integrity flags (integrityLogRef.current) are collected but not
+        // yet sent to the backend — that wiring is a later step.
       );
       if (res.data.success) {
         setResult(res.data);
@@ -262,7 +419,9 @@ export default function InterviewPortal() {
   };
 
   // ── Start interview ───────────────────────────────────────────────────────
-  const startInterview = () => {
+  const startInterview = async () => {
+    interviewStartRef.current = Date.now();
+    await startCamera();
     askQuestion(0);
   };
 
@@ -277,6 +436,10 @@ export default function InterviewPortal() {
       synthRef.current?.cancel();
       recognRef.current?.stop();
       clearInterval(timerRef.current);
+      clearInterval(detectionRef.current);
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(t => t.stop());
+      }
     };
   }, []);
 
@@ -343,6 +506,21 @@ export default function InterviewPortal() {
                 </div>
               ))}
             </div>
+          </div>
+
+          {/* Camera / integrity disclosure */}
+          <div className="bg-blue-950/30 rounded-2xl p-5 border border-blue-800/40 text-left space-y-2">
+            <div className="flex items-center gap-2">
+              <Camera size={16} className="text-blue-400" />
+              <h3 className="text-white font-semibold text-sm">Camera-based interview integrity</h3>
+            </div>
+            <p className="text-gray-400 text-xs leading-relaxed">
+              This interview uses your camera to check that you're present, alone,
+              and not referencing a phone while answering. Detection runs entirely
+              in your browser —
+              <span className="text-gray-300 font-medium"> no video is recorded, stored, or sent to our servers.</span>
+              {" "}You'll be asked to allow camera access when you click Start.
+            </p>
           </div>
 
           <button
@@ -478,7 +656,65 @@ export default function InterviewPortal() {
       </div>
 
       {/* Main content */}
-      <div className="flex-1 flex flex-col items-center justify-center p-6 max-w-2xl mx-auto w-full">
+      <div className="flex-1 flex flex-col items-center justify-center p-6 max-w-2xl mx-auto w-full relative">
+
+        {/* Camera preview + integrity badge (floating, top-right of main content) */}
+        <div className="absolute top-0 right-0 md:right-6">
+          <div className="relative w-32 h-24 bg-gray-900 rounded-xl overflow-hidden border-2 border-gray-800">
+            <video
+              ref={videoRef}
+              autoPlay
+              muted
+              playsInline
+              className="w-full h-full object-cover scale-x-[-1]"
+            />
+            {!cameraReady && (
+              <div className="absolute inset-0 flex items-center justify-center bg-gray-900/90">
+                <Camera size={18} className="text-gray-600" />
+              </div>
+            )}
+          </div>
+          {cameraReady && (
+            <div className={`mt-1.5 flex items-center gap-1 text-xs px-2 py-1 rounded-full justify-center ${
+              faceStatus === "ok"
+                ? "bg-green-500/10 text-green-400 border border-green-500/20"
+                : faceStatus === "checking"
+                ? "bg-gray-500/10 text-gray-400 border border-gray-500/20"
+                : "bg-red-500/10 text-red-400 border border-red-500/20"
+            }`}>
+              {faceStatus === "ok" && (
+                <>
+                  <CheckCircle size={11} /> Monitoring
+                </>
+              )}
+              {faceStatus === "checking" && (
+                <>
+                  <Loader size={11} className="animate-spin" /> Starting camera...
+                </>
+              )}
+              {faceStatus === "no_face" && (
+                <>
+                  <ShieldAlert size={11} /> No face detected
+                </>
+              )}
+              {faceStatus === "multiple_faces" && (
+                <>
+                  <ShieldAlert size={11} /> Multiple faces
+                </>
+              )}
+              {faceStatus === "phone_detected" && (
+                <>
+                  <ShieldAlert size={11} /> Phone detected
+                </>
+              )}
+            </div>
+          )}
+          {cameraError && (
+            <p className="text-red-400 text-[10px] mt-1 max-w-[130px] text-center leading-tight">
+              {cameraError}
+            </p>
+          )}
+        </div>
 
         {/* AI Avatar */}
         <div className={`w-24 h-24 rounded-full flex items-center justify-center mb-8 transition-all duration-300 ${
