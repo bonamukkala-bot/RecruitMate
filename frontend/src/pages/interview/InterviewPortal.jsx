@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import {
   Mic, MicOff, Volume2, ChevronRight,
   CheckCircle, XCircle, Loader, Bot,
-  AlertCircle, Trophy, Clock, Camera, ShieldAlert
+  AlertCircle, Trophy, Clock, Camera, ShieldAlert, AlertTriangle, Ban
 } from "lucide-react";
 import axios from "axios";
 import * as faceapi from "@vladmandic/face-api";
@@ -19,6 +19,7 @@ const FACE_MODEL_URL = "https://justadudewhohacks.github.io/face-api.js/models";
 const STAGE = {
   LOADING   : "loading",
   INTRO     : "intro",
+  VERIFYING : "verifying",
   SPEAKING  : "speaking",
   LISTENING : "listening",
   PROCESSING: "processing",
@@ -27,7 +28,27 @@ const STAGE = {
   RESULT    : "result",
   ERROR     : "error",
   EXPIRED   : "expired",
+  TERMINATED: "terminated",
   DONE      : "done"
+};
+
+// Stages during which the candidate is actively "in" the interview and
+// integrity violations (tab switch, fullscreen exit, phone, identity) should count.
+const ACTIVE_STAGES = [STAGE.SPEAKING, STAGE.LISTENING, STAGE.PROCESSING, STAGE.NEXT];
+
+// Minimum time between two counted strikes, so a single switch-away event
+// (which can fire both a blur AND a visibilitychange AND a fullscreen-exit
+// event almost simultaneously) is only ever counted once.
+const STRIKE_COOLDOWN_MS = 4000;
+
+// face-api.js euclidean-distance convention: < 0.6 is generally the same person.
+const IDENTITY_MATCH_THRESHOLD = 0.6;
+
+const VIOLATION_LABELS = {
+  tab_switch      : "You switched away from this tab.",
+  window_blur     : "You switched away from this window.",
+  fullscreen_exit : "You exited full-screen mode.",
+  phone_detected  : "A phone was detected on camera."
 };
 
 // ── Waveform animation ────────────────────────────────────────────────────────
@@ -99,8 +120,15 @@ export default function InterviewPortal() {
   const [cameraReady,    setCameraReady]    = useState(false);
   const [cameraError,    setCameraError]    = useState("");
   const [modelsLoading,  setModelsLoading]  = useState(true);
-  const [faceStatus,     setFaceStatus]     = useState("checking"); // checking | ok | no_face | multiple_faces | phone_detected
+  const [faceStatus,     setFaceStatus]     = useState("checking"); // checking | ok | no_face | multiple_faces | phone_detected | identity_mismatch
   const [flagCount,      setFlagCount]      = useState(0);
+
+  // ── Identity verification state (runs once, before Q1) ───────────────────
+  const [verifyStatus, setVerifyStatus] = useState("waiting"); // waiting | no_face | multiple_faces | verified
+
+  // ── Strike / termination state ────────────────────────────────────────────
+  const [warning,          setWarning]          = useState(null); // { message } | null
+  const [terminationReason, setTerminationReason] = useState("");
 
   const cocoModelRef = useRef(null);
 
@@ -110,16 +138,39 @@ export default function InterviewPortal() {
   const videoRef       = useRef(null);
   const streamRef       = useRef(null);
   const detectionRef    = useRef(null);
+  const warningTimeoutRef = useRef(null);
   const integrityLogRef = useRef([]); // { type, at_seconds }
   const interviewStartRef = useRef(null);
+
+  // Identity verification refs
+  const referenceDescriptorRef   = useRef(null);
+  const verifyIntervalRef        = useRef(null);
+  const identityCheckIntervalRef = useRef(null);
+  const identityMismatchCountRef = useRef(0);
+
+  // Strike-system refs (avoid stale closures inside event listeners / intervals)
+  const stageRef       = useRef(stage);
+  const strikeCountRef = useRef(0);
+  const lastStrikeAtRef = useRef(0);
+  const answersRef     = useRef(answers);
+  const currentQRef    = useRef(currentQ);
+  const transcriptRef  = useRef(transcript);
+
+  useEffect(() => { stageRef.current = stage; }, [stage]);
+  useEffect(() => { answersRef.current = answers; }, [answers]);
+  useEffect(() => { currentQRef.current = currentQ; }, [currentQ]);
+  useEffect(() => { transcriptRef.current = transcript; }, [transcript]);
 
   // ── Load face-api + coco-ssd models once on mount ─────────────────────────
   useEffect(() => {
     const loadModels = async () => {
       try {
         await faceapi.nets.tinyFaceDetector.loadFromUri(FACE_MODEL_URL);
+        // Needed for identity verification (recognition), not just detection.
+        await faceapi.nets.faceLandmark68Net.loadFromUri(FACE_MODEL_URL);
+        await faceapi.nets.faceRecognitionNet.loadFromUri(FACE_MODEL_URL);
       } catch (err) {
-        console.error("Failed to load face detection models:", err);
+        console.error("Failed to load face detection/recognition models:", err);
         // don't block the interview if face models fail to load
       }
       try {
@@ -162,11 +213,6 @@ export default function InterviewPortal() {
         audio: false
       });
       streamRef.current = stream;
-      // NOTE: we do NOT try to attach the stream to videoRef.current here.
-      // At this point (called from the Intro screen) the <video> element
-      // doesn't exist in the DOM yet — it only renders once we leave the
-      // intro stage. Attaching happens in the useEffect below, which runs
-      // AFTER the video element has actually mounted.
       setCameraReady(true);
       setCameraError("");
       return true;
@@ -178,16 +224,11 @@ export default function InterviewPortal() {
   }, []);
 
   // ── Attach the already-acquired camera stream to the <video> element ─────
-  // once it exists in the DOM (i.e. once we've left the Intro stage).
+  // once it exists in the DOM (Intro screen has none; Verifying/Interview do).
   useEffect(() => {
     if (cameraReady && streamRef.current && videoRef.current) {
       videoRef.current.srcObject = streamRef.current;
-      // Some browsers need an explicit play() call even with autoPlay set,
-      // especially right after srcObject is assigned imperatively.
-      videoRef.current.play().catch(() => {
-        // Autoplay can be blocked in rare cases; the preview will just stay
-        // paused, but detection can still work once metadata loads.
-      });
+      videoRef.current.play().catch(() => {});
     }
   }, [cameraReady, stage]);
 
@@ -198,7 +239,171 @@ export default function InterviewPortal() {
       : 0;
     integrityLogRef.current.push({ type, at_seconds: elapsedSeconds });
     setFlagCount(integrityLogRef.current.length);
+    return elapsedSeconds;
   }, []);
+
+  // ── Terminate the interview immediately (2nd strike, or identity mismatch) ─
+  const terminateInterview = useCallback(async (reason) => {
+    if (stageRef.current === STAGE.TERMINATED || stageRef.current === STAGE.RESULT) return;
+
+    // Stop everything
+    synthRef.current?.cancel();
+    recognRef.current?.stop();
+    recognRef.current = null;
+    clearInterval(timerRef.current);
+    clearInterval(detectionRef.current);
+    clearInterval(verifyIntervalRef.current);
+    clearInterval(identityCheckIntervalRef.current);
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+    }
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    }
+
+    setTerminationReason(reason);
+    setStage(STAGE.TERMINATED);
+
+    try {
+      await axios.post(`${API}/pipeline/interview/public/${token}/submit`, {
+        qa_pairs: answersRef.current,
+        terminated: true,
+        termination_reason: reason
+      });
+    } catch (err) {
+      // Swallow — candidate still sees the Terminated screen either way.
+    }
+  }, [token]);
+
+  // ── Register a strike (phone / tab-switch / fullscreen-exit) ─────────────
+  // 1st strike -> warning overlay. 2nd strike -> terminate immediately.
+  const registerStrike = useCallback((type) => {
+    if (!ACTIVE_STAGES.includes(stageRef.current)) return;
+
+    const now = Date.now();
+    if (now - lastStrikeAtRef.current < STRIKE_COOLDOWN_MS) return; // debounce
+    lastStrikeAtRef.current = now;
+
+    logFlag(type);
+    strikeCountRef.current += 1;
+
+    const label = VIOLATION_LABELS[type] || "A policy violation was detected.";
+
+    if (strikeCountRef.current === 1) {
+      clearTimeout(warningTimeoutRef.current);
+      setWarning({
+        message: `${label} This is your first and final warning — doing this again will end your interview immediately.`
+      });
+      warningTimeoutRef.current = setTimeout(() => setWarning(null), 6000);
+    } else {
+      setWarning(null);
+      terminateInterview(`${label} (second violation)`);
+    }
+  }, [logFlag, terminateInterview]);
+
+  // ── Identity verification loop (Verifying screen only, before Q1) ────────
+  // Captures a reference face descriptor once a single, stable face is seen
+  // for two consecutive reads (~2.4s), then moves on to Question 1.
+  useEffect(() => {
+    if (stage !== STAGE.VERIFYING || !cameraReady || modelsLoading) return;
+
+    let cancelled = false;
+    let stableHits = 0;
+
+    verifyIntervalRef.current = setInterval(async () => {
+      if (cancelled || !videoRef.current || videoRef.current.readyState !== 4) return;
+
+      try {
+        const allFaces = await faceapi.detectAllFaces(
+          videoRef.current,
+          new faceapi.TinyFaceDetectorOptions()
+        );
+
+        if (allFaces.length > 1) {
+          setVerifyStatus("multiple_faces");
+          stableHits = 0;
+          return;
+        }
+        if (allFaces.length === 0) {
+          setVerifyStatus("no_face");
+          stableHits = 0;
+          return;
+        }
+
+        const detection = await faceapi
+          .detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions())
+          .withFaceLandmarks()
+          .withFaceDescriptor();
+
+        if (!detection) {
+          setVerifyStatus("no_face");
+          stableHits = 0;
+          return;
+        }
+
+        setVerifyStatus("waiting");
+        stableHits += 1;
+
+        if (stableHits >= 2) {
+          referenceDescriptorRef.current = detection.descriptor;
+          cancelled = true;
+          clearInterval(verifyIntervalRef.current);
+          setVerifyStatus("verified");
+          setTimeout(() => {
+            askQuestion(0);
+          }, 1200);
+        }
+      } catch (err) {
+        // keep retrying silently — camera hiccups shouldn't surface an error here
+      }
+    }, 1200);
+
+    return () => {
+      cancelled = true;
+      clearInterval(verifyIntervalRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage, cameraReady, modelsLoading]);
+
+  // ── Ongoing identity check during the active interview ────────────────────
+  // Every 8s, compares the current face against the verified reference.
+  // Two consecutive mismatches -> hard termination (more severe than a strike).
+  useEffect(() => {
+    if (!cameraReady || modelsLoading) return;
+
+    identityCheckIntervalRef.current = setInterval(async () => {
+      if (!videoRef.current || videoRef.current.readyState !== 4) return;
+      if (!referenceDescriptorRef.current) return;
+      if (!ACTIVE_STAGES.includes(stageRef.current)) return;
+
+      try {
+        const detection = await faceapi
+          .detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions())
+          .withFaceLandmarks()
+          .withFaceDescriptor();
+
+        if (!detection) return; // no_face is already handled by the other detection loop
+
+        const distance = faceapi.euclideanDistance(referenceDescriptorRef.current, detection.descriptor);
+
+        if (distance > IDENTITY_MATCH_THRESHOLD) {
+          identityMismatchCountRef.current += 1;
+          setFaceStatus("identity_mismatch");
+
+          if (identityMismatchCountRef.current >= 2) {
+            logFlag("identity_mismatch");
+            terminateInterview("Identity verification failed — the person on camera no longer matches the verified identity.");
+          }
+        } else {
+          identityMismatchCountRef.current = 0;
+        }
+      } catch (err) {
+        // ignore — don't let a bad frame kill the interview
+      }
+    }, 8000);
+
+    return () => clearInterval(identityCheckIntervalRef.current);
+  }, [cameraReady, modelsLoading, logFlag, terminateInterview]);
 
   // ── Face + phone detection loop (runs every 2s once camera + models ready) ─
   useEffect(() => {
@@ -209,10 +414,9 @@ export default function InterviewPortal() {
 
     detectionRef.current = setInterval(async () => {
       if (!videoRef.current || videoRef.current.readyState !== 4) return;
+      if (!ACTIVE_STAGES.includes(stageRef.current)) return;
 
       try {
-        // ── Phone check first — if a phone is visible, that's the most
-        // important integrity signal regardless of face state ─────────────
         if (cocoModelRef.current) {
           const objects = await cocoModelRef.current.detect(videoRef.current);
           const phoneVisible = objects.some(
@@ -221,10 +425,10 @@ export default function InterviewPortal() {
           if (phoneVisible) {
             setFaceStatus("phone_detected");
             if (lastStatus !== "phone_detected") {
-              logFlag("phone_detected");
+              registerStrike("phone_detected");
               lastStatus = "phone_detected";
             }
-            return; // skip face check this cycle, phone flag takes priority
+            return;
           }
         }
 
@@ -236,8 +440,6 @@ export default function InterviewPortal() {
         if (detections.length === 0) {
           consecutiveNoFace += 1;
           setFaceStatus("no_face");
-          // Only flag after ~6 seconds of no face (3 checks), to avoid false positives
-          // from brief head turns or camera hiccups
           if (consecutiveNoFace === 3 && lastStatus !== "no_face_flagged") {
             logFlag("no_face");
             lastStatus = "no_face_flagged";
@@ -260,7 +462,40 @@ export default function InterviewPortal() {
     }, 2000);
 
     return () => clearInterval(detectionRef.current);
-  }, [cameraReady, modelsLoading, logFlag]);
+  }, [cameraReady, modelsLoading, logFlag, registerStrike]);
+
+  // ── Tab-switch / window-blur detection ────────────────────────────────────
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden && ACTIVE_STAGES.includes(stageRef.current)) {
+        registerStrike("tab_switch");
+      }
+    };
+    const handleBlur = () => {
+      if (ACTIVE_STAGES.includes(stageRef.current)) {
+        registerStrike("window_blur");
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("blur", handleBlur);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("blur", handleBlur);
+    };
+  }, [registerStrike]);
+
+  // ── Full-screen exit detection ────────────────────────────────────────────
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      if (!document.fullscreenElement && ACTIVE_STAGES.includes(stageRef.current)) {
+        registerStrike("fullscreen_exit");
+      }
+    };
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, [registerStrike]);
 
   // ── Speech synthesis ──────────────────────────────────────────────────────
   const speak = useCallback((text, onEnd) => {
@@ -316,7 +551,6 @@ export default function InterviewPortal() {
     recog.start();
     setStage(STAGE.LISTENING);
 
-    // Start 2-minute timer
     setTimeLeft(120);
     timerRef.current = setInterval(() => {
       setTimeLeft(prev => {
@@ -352,7 +586,6 @@ export default function InterviewPortal() {
 
   // ── Next question ─────────────────────────────────────────────────────────
   const handleNextQuestion = useCallback((currentTranscript) => {
-    // Stop recognition and timer
     if (recognRef.current) {
       recognRef.current.stop();
       recognRef.current = null;
@@ -373,13 +606,11 @@ export default function InterviewPortal() {
     const nextIndex = currentQ + 1;
 
     if (nextIndex >= interview.questions.length) {
-      // All questions done — submit
       submitInterview(newAnswers);
     } else {
       setCurrentQ(nextIndex);
       setStage(STAGE.NEXT);
 
-      // Brief pause then ask next
       setTimeout(() => {
         speak(`Good. `, () => {
           askQuestion(nextIndex);
@@ -392,18 +623,19 @@ export default function InterviewPortal() {
   const submitInterview = async (finalAnswers) => {
     setStage(STAGE.SUBMITTING);
 
-    // Stop camera + detection once the interview is over
     clearInterval(detectionRef.current);
+    clearInterval(identityCheckIntervalRef.current);
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(t => t.stop());
+    }
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
     }
 
     try {
       const res = await axios.post(
         `${API}/pipeline/interview/public/${token}/submit`,
         { qa_pairs: finalAnswers }
-        // NOTE: integrity flags (integrityLogRef.current) are collected but not
-        // yet sent to the backend — that wiring is a later step.
       );
       if (res.data.success) {
         setResult(res.data);
@@ -421,8 +653,21 @@ export default function InterviewPortal() {
   // ── Start interview ───────────────────────────────────────────────────────
   const startInterview = async () => {
     interviewStartRef.current = Date.now();
+    strikeCountRef.current = 0;
+    lastStrikeAtRef.current = 0;
+    identityMismatchCountRef.current = 0;
+    referenceDescriptorRef.current = null;
+
+    try {
+      if (document.documentElement.requestFullscreen) {
+        await document.documentElement.requestFullscreen();
+      }
+    } catch (err) {
+      // Fullscreen denied/unsupported — interview continues without it.
+    }
+
     await startCamera();
-    askQuestion(0);
+    setStage(STAGE.VERIFYING);
   };
 
   // ── Skip / Next manually ──────────────────────────────────────────────────
@@ -437,6 +682,9 @@ export default function InterviewPortal() {
       recognRef.current?.stop();
       clearInterval(timerRef.current);
       clearInterval(detectionRef.current);
+      clearInterval(verifyIntervalRef.current);
+      clearInterval(identityCheckIntervalRef.current);
+      clearTimeout(warningTimeoutRef.current);
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(t => t.stop());
       }
@@ -447,7 +695,6 @@ export default function InterviewPortal() {
   // RENDER
   // ─────────────────────────────────────────────────────────────────────────
 
-  // Loading
   if (stage === STAGE.LOADING) {
     return (
       <Screen>
@@ -459,7 +706,6 @@ export default function InterviewPortal() {
     );
   }
 
-  // Error
   if (stage === STAGE.ERROR || stage === STAGE.EXPIRED) {
     return (
       <Screen>
@@ -472,7 +718,29 @@ export default function InterviewPortal() {
     );
   }
 
-  // Intro screen
+  if (stage === STAGE.TERMINATED) {
+    return (
+      <Screen>
+        <div className="text-center space-y-4 max-w-md">
+          <div className="w-20 h-20 bg-red-600 rounded-2xl flex items-center justify-center mx-auto shadow-lg shadow-red-600/30">
+            <Ban size={40} className="text-white" />
+          </div>
+          <h2 className="text-2xl font-bold text-white">Interview Ended</h2>
+          <p className="text-gray-400">
+            Your interview was ended due to an integrity policy violation.
+          </p>
+          <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700 text-left">
+            <p className="text-gray-500 text-xs mb-1">Reason</p>
+            <p className="text-gray-300 text-sm">{terminationReason}</p>
+          </div>
+          <p className="text-gray-500 text-sm">
+            If you believe this was a mistake, please contact the hiring team.
+          </p>
+        </div>
+      </Screen>
+    );
+  }
+
   if (stage === STAGE.INTRO) {
     return (
       <Screen>
@@ -508,7 +776,6 @@ export default function InterviewPortal() {
             </div>
           </div>
 
-          {/* Camera / integrity disclosure */}
           <div className="bg-blue-950/30 rounded-2xl p-5 border border-blue-800/40 text-left space-y-2">
             <div className="flex items-center gap-2">
               <Camera size={16} className="text-blue-400" />
@@ -516,10 +783,24 @@ export default function InterviewPortal() {
             </div>
             <p className="text-gray-400 text-xs leading-relaxed">
               This interview uses your camera to check that you're present, alone,
-              and not referencing a phone while answering. Detection runs entirely
-              in your browser —
+              and not referencing a phone while answering. Before Question 1, you'll
+              also do a quick face check to confirm your identity for the rest of the
+              interview. Detection runs entirely in your browser —
               <span className="text-gray-300 font-medium"> no video is recorded, stored, or sent to our servers.</span>
               {" "}You'll be asked to allow camera access when you click Start.
+            </p>
+          </div>
+
+          <div className="bg-amber-950/20 rounded-2xl p-5 border border-amber-800/30 text-left space-y-2">
+            <div className="flex items-center gap-2">
+              <AlertTriangle size={16} className="text-amber-400" />
+              <h3 className="text-white font-semibold text-sm">Stay on this tab, in full screen</h3>
+            </div>
+            <p className="text-gray-400 text-xs leading-relaxed">
+              The interview will run in full-screen mode. Switching tabs, switching
+              windows, exiting full screen, or showing a phone on camera counts as a
+              violation. You'll get <span className="text-gray-300 font-medium">one warning</span> —
+              a second violation of any kind will <span className="text-gray-300 font-medium">end the interview immediately</span>.
             </p>
           </div>
 
@@ -535,7 +816,59 @@ export default function InterviewPortal() {
     );
   }
 
-  // Result screen
+  // Identity verification screen (runs once, before Q1)
+  if (stage === STAGE.VERIFYING) {
+    return (
+      <Screen>
+        <div className="text-center space-y-6 max-w-md w-full">
+          <div className="w-20 h-20 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto shadow-lg shadow-blue-600/30">
+            <ShieldAlert size={40} className="text-white" />
+          </div>
+          <div>
+            <h2 className="text-2xl font-bold text-white">Verifying your identity</h2>
+            <p className="text-gray-400 text-sm mt-2">
+              Look directly at the camera. This confirms who's answering before we begin.
+            </p>
+          </div>
+
+          <div className="relative w-full max-w-xs mx-auto aspect-[4/3] bg-gray-900 rounded-2xl overflow-hidden border-2 border-gray-800">
+            <video
+              ref={videoRef}
+              autoPlay
+              muted
+              playsInline
+              className="w-full h-full object-cover scale-x-[-1]"
+            />
+            {!cameraReady && (
+              <div className="absolute inset-0 flex items-center justify-center bg-gray-900/90">
+                <Loader size={24} className="text-gray-500 animate-spin" />
+              </div>
+            )}
+          </div>
+
+          <div className={`flex items-center justify-center gap-2 text-sm font-medium rounded-xl py-3 px-4 border ${
+            verifyStatus === "verified"
+              ? "bg-green-500/10 text-green-400 border-green-500/20"
+              : verifyStatus === "no_face"
+              ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+              : verifyStatus === "multiple_faces"
+              ? "bg-red-500/10 text-red-400 border-red-500/20"
+              : "bg-gray-800/50 text-gray-400 border-gray-700"
+          }`}>
+            {verifyStatus === "verified" && (<><CheckCircle size={16} /> Identity verified — starting now</>)}
+            {verifyStatus === "no_face" && (<><ShieldAlert size={16} /> No face detected — center yourself in frame</>)}
+            {verifyStatus === "multiple_faces" && (<><ShieldAlert size={16} /> Only one person should be visible</>)}
+            {verifyStatus === "waiting" && (<><Loader size={16} className="animate-spin" /> Hold still, checking...</>)}
+          </div>
+
+          {cameraError && (
+            <p className="text-red-400 text-xs">{cameraError}</p>
+          )}
+        </div>
+      </Screen>
+    );
+  }
+
   if (stage === STAGE.RESULT) {
     const passed = result?.decision === "advance";
     return (
@@ -598,7 +931,6 @@ export default function InterviewPortal() {
     );
   }
 
-  // Submitting
   if (stage === STAGE.SUBMITTING) {
     return (
       <Screen>
@@ -611,7 +943,6 @@ export default function InterviewPortal() {
     );
   }
 
-  // Interview in progress
   const question    = interview?.questions[currentQ];
   const isListening = stage === STAGE.LISTENING;
   const isSpeaking  = stage === STAGE.SPEAKING;
@@ -621,7 +952,13 @@ export default function InterviewPortal() {
 
   return (
     <div className="min-h-screen bg-gray-950 flex flex-col">
-      {/* Top bar */}
+      {warning && (
+        <div className="bg-amber-600 text-white px-6 py-3 flex items-center gap-2 justify-center text-sm font-medium">
+          <AlertTriangle size={16} className="shrink-0" />
+          <span>{warning.message}</span>
+        </div>
+      )}
+
       <div className="border-b border-gray-800 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
@@ -647,7 +984,6 @@ export default function InterviewPortal() {
         </div>
       </div>
 
-      {/* Progress bar */}
       <div className="h-1 bg-gray-800">
         <div
           className="h-full bg-blue-600 transition-all duration-500"
@@ -655,10 +991,8 @@ export default function InterviewPortal() {
         />
       </div>
 
-      {/* Main content */}
       <div className="flex-1 flex flex-col items-center justify-center p-6 max-w-2xl mx-auto w-full relative">
 
-        {/* Camera preview + integrity badge (floating, top-right of main content) */}
         <div className="absolute top-0 right-0 md:right-6">
           <div className="relative w-32 h-24 bg-gray-900 rounded-xl overflow-hidden border-2 border-gray-800">
             <video
@@ -682,31 +1016,12 @@ export default function InterviewPortal() {
                 ? "bg-gray-500/10 text-gray-400 border border-gray-500/20"
                 : "bg-red-500/10 text-red-400 border border-red-500/20"
             }`}>
-              {faceStatus === "ok" && (
-                <>
-                  <CheckCircle size={11} /> Monitoring
-                </>
-              )}
-              {faceStatus === "checking" && (
-                <>
-                  <Loader size={11} className="animate-spin" /> Starting camera...
-                </>
-              )}
-              {faceStatus === "no_face" && (
-                <>
-                  <ShieldAlert size={11} /> No face detected
-                </>
-              )}
-              {faceStatus === "multiple_faces" && (
-                <>
-                  <ShieldAlert size={11} /> Multiple faces
-                </>
-              )}
-              {faceStatus === "phone_detected" && (
-                <>
-                  <ShieldAlert size={11} /> Phone detected
-                </>
-              )}
+              {faceStatus === "ok" && (<><CheckCircle size={11} /> Monitoring</>)}
+              {faceStatus === "checking" && (<><Loader size={11} className="animate-spin" /> Starting camera...</>)}
+              {faceStatus === "no_face" && (<><ShieldAlert size={11} /> No face detected</>)}
+              {faceStatus === "multiple_faces" && (<><ShieldAlert size={11} /> Multiple faces</>)}
+              {faceStatus === "phone_detected" && (<><ShieldAlert size={11} /> Phone detected</>)}
+              {faceStatus === "identity_mismatch" && (<><ShieldAlert size={11} /> Identity mismatch</>)}
             </div>
           )}
           {cameraError && (
@@ -716,7 +1031,6 @@ export default function InterviewPortal() {
           )}
         </div>
 
-        {/* AI Avatar */}
         <div className={`w-24 h-24 rounded-full flex items-center justify-center mb-8 transition-all duration-300 ${
           isSpeaking
             ? "bg-blue-600 shadow-2xl shadow-blue-600/50 scale-110"
@@ -732,7 +1046,6 @@ export default function InterviewPortal() {
           }
         </div>
 
-        {/* Status */}
         <div className="text-center mb-6">
           {isSpeaking && (
             <div className="flex items-center gap-2 text-blue-400 text-sm font-medium justify-center mb-2">
@@ -748,12 +1061,10 @@ export default function InterviewPortal() {
           )}
         </div>
 
-        {/* Waveform */}
         <div className="mb-8">
           <Waveform active={isListening} />
         </div>
 
-        {/* Question card */}
         {question && (
           <div className="w-full bg-gray-900 border border-gray-800 rounded-2xl p-6 mb-6">
             <div className="flex items-center gap-2 mb-3">
@@ -768,7 +1079,6 @@ export default function InterviewPortal() {
           </div>
         )}
 
-        {/* Live transcript */}
         {isListening && (
           <div className="w-full bg-gray-900/50 border border-gray-800 rounded-xl p-4 mb-6 min-h-[80px]">
             <p className="text-xs text-gray-500 mb-2">Your answer (live transcript):</p>
@@ -780,7 +1090,6 @@ export default function InterviewPortal() {
           </div>
         )}
 
-        {/* Action buttons */}
         {isListening && (
           <div className="flex gap-3 w-full">
             <button
@@ -802,7 +1111,6 @@ export default function InterviewPortal() {
   );
 }
 
-// ── Full screen wrapper ───────────────────────────────────────────────────────
 function Screen({ children }) {
   return (
     <div className="min-h-screen bg-gray-950 flex items-center justify-center p-6">
