@@ -10,14 +10,12 @@ export default function DashboardLayout() {
   const navigate             = useNavigate();
 
   useEffect(() => {
-    if (!loading && !company) {
-      navigate("/login");
-    }
+    if (!loading && !company) navigate("/login");
   }, [company, loading, navigate]);
 
   if (loading) {
     return (
-      <div className="h-screen flex items-center justify-center bg-dark-950">
+      <div className="h-screen flex items-center justify-center bg-surface-50">
         <LoadingSpinner size="lg" text="Loading RecruitMate..." />
       </div>
     );
@@ -26,10 +24,10 @@ export default function DashboardLayout() {
   if (!company) return null;
 
   return (
-    <div className="min-h-screen bg-dark-950">
+    <div className="min-h-screen bg-surface-50">
       <Sidebar />
       <TopBar />
-      <main className="ml-60 pt-16 min-h-screen">
+      <main className="ml-60 pt-14 min-h-screen">
         <div className="p-6 animate-fade-in">
           <Outlet />
         </div>

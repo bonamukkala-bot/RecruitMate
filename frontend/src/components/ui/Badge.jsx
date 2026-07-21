@@ -6,7 +6,7 @@ const variants = {
   yellow: "badge-yellow",
   red   : "badge-red",
   purple: "badge-purple",
-  gray  : "badge bg-dark-700 text-dark-300 border border-dark-600"
+  gray  : "badge-gray"
 };
 
 const statusMap = {
@@ -18,13 +18,14 @@ const statusMap = {
   active     : "green",
   closed     : "gray",
   advance    : "green",
-  reject     : "red"
+  reject     : "red",
+  pending    : "yellow"
 };
 
-export default function Badge({ children, variant, status }) {
+export default function Badge({ children, variant, status, className }) {
   const v = variant || statusMap[status] || "gray";
   return (
-    <span className={clsx(variants[v])}>
+    <span className={clsx(variants[v], className)}>
       {children}
     </span>
   );
