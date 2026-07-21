@@ -2,7 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
 @layer base {
   * {
@@ -12,11 +12,15 @@
   }
 
   body {
-    background-color: #f8f7f4;
-    color: #1a1a2e;
-    font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+    background-color: #ECEEE6;
+    color: #12203A;
+    font-family: 'Public Sans', system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1, h2, h3 {
+    font-family: 'Fraunces', serif;
   }
 
   ::-webkit-scrollbar {
@@ -24,20 +28,20 @@
   }
 
   ::-webkit-scrollbar-track {
-    background: #f1f0ed;
+    background: #ECEEE6;
   }
 
   ::-webkit-scrollbar-thumb {
-    background: #d4d2cc;
+    background: #C9CCBE;
     border-radius: 99px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: #b8b6b0;
+    background: #ABAE9E;
   }
 
   code, pre, .mono {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'IBM Plex Mono', monospace;
   }
 }
 
@@ -46,89 +50,121 @@
   /* ── Buttons ──────────────────────────────────────────────── */
   .btn-primary {
     @apply inline-flex items-center gap-2 px-4 py-2 rounded-lg font-semibold text-sm
-           bg-indigo-600 hover:bg-indigo-700 text-white
-           shadow-sm shadow-indigo-200
+           bg-ledger-500 hover:bg-ledger-600 text-white
+           shadow-card
            transition-all duration-150
            disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
   .btn-secondary {
     @apply inline-flex items-center gap-2 px-4 py-2 rounded-lg font-semibold text-sm
-           bg-white hover:bg-gray-50 text-gray-700
-           border border-gray-200 shadow-sm
+           bg-white hover:bg-stone-50 text-ink-500
+           border border-stone-200 shadow-card
            transition-all duration-150
            disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
   .btn-danger {
     @apply inline-flex items-center gap-2 px-4 py-2 rounded-lg font-semibold text-sm
-           bg-red-50 hover:bg-red-100 text-red-600
-           border border-red-200
+           bg-brick-50 hover:bg-brick-100 text-brick-600
+           border border-brick-200
            transition-all duration-150;
   }
 
   .btn-ghost {
     @apply inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm
-           text-gray-500 hover:text-gray-900 hover:bg-gray-100
+           text-ink-300 hover:text-ink-500 hover:bg-stone-100
            transition-all duration-150;
   }
 
   /* ── Inputs ───────────────────────────────────────────────── */
   .input {
-    @apply w-full bg-white border border-gray-200 rounded-lg px-4 py-2.5
-           text-gray-900 placeholder-gray-400 text-sm
-           focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100
-           transition-all duration-150 shadow-sm;
+    @apply w-full bg-white border border-stone-200 rounded-lg px-4 py-2.5
+           text-ink-500 placeholder-stone-400 text-sm
+           focus:outline-none focus:border-ledger-400 focus:ring-2 focus:ring-ledger-50
+           transition-all duration-150 shadow-card;
   }
 
   /* ── Cards ────────────────────────────────────────────────── */
   .card {
-    @apply bg-white border border-gray-200/80 rounded-2xl p-6 shadow-sm;
+    @apply bg-white border border-stone-200 rounded-2xl p-6 shadow-card;
   }
 
   .card-hover {
-    @apply card hover:border-indigo-200 hover:shadow-md transition-all duration-200 cursor-pointer;
+    @apply card hover:border-ledger-200 hover:shadow-card-md transition-all duration-200 cursor-pointer;
   }
 
-  /* ── Badges ───────────────────────────────────────────────── */
+  /* folder-tab notch — opt into this on job/candidate cards in later steps */
+  .card-notch {
+    border-radius: 0 16px 16px 16px;
+    clip-path: polygon(16px 0, 100% 0, 100% 100%, 0 100%, 0 16px);
+  }
+
+  /* ── Stamps (status badges) ──────────────────────────────── */
+  .stamp {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.65rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    border-radius: 3px;
+    transform: rotate(-2deg);
+    border: 1.5px solid currentColor;
+    outline: 1px solid currentColor;
+    outline-offset: 2px;
+    background: transparent;
+    white-space: nowrap;
+  }
+
+  /* same class names your components already use, restyled as stamps */
   .badge {
-    @apply inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold;
+    @apply stamp;
   }
 
   .badge-green {
-    @apply badge bg-emerald-50 text-emerald-700 border border-emerald-200;
+    @apply stamp text-verified-600;
+    background: rgba(31, 110, 88, 0.07);
   }
 
   .badge-blue {
-    @apply badge bg-blue-50 text-blue-700 border border-blue-200;
+    @apply stamp text-ledger-600;
+    background: rgba(42, 75, 124, 0.07);
   }
 
   .badge-yellow {
-    @apply badge bg-amber-50 text-amber-700 border border-amber-200;
+    @apply stamp text-gold-700;
+    background: rgba(198, 138, 30, 0.08);
   }
 
   .badge-red {
-    @apply badge bg-red-50 text-red-700 border border-red-200;
+    @apply stamp text-brick-600;
+    background: rgba(162, 59, 46, 0.07);
   }
 
   .badge-purple {
-    @apply badge bg-violet-50 text-violet-700 border border-violet-200;
+    @apply stamp text-ink-500;
+    background: rgba(18, 32, 58, 0.06);
   }
 
   .badge-gray {
-    @apply badge bg-gray-100 text-gray-600 border border-gray-200;
+    @apply stamp text-stone-600;
+    background: rgba(107, 110, 95, 0.08);
   }
 
-  /* ── Sidebar ──────────────────────────────────────────────── */
+  /* ── Sidebar (item-level only — container gets repainted in Step 2) ── */
   .sidebar-item {
     @apply flex items-center gap-3 px-3 py-2.5 rounded-xl
-           text-gray-500 hover:text-gray-900 hover:bg-gray-100
+           text-ink-300 hover:text-ink-500 hover:bg-stone-100
            transition-all duration-150 cursor-pointer text-sm font-medium;
   }
 
   .sidebar-item-active {
     @apply flex items-center gap-3 px-3 py-2.5 rounded-xl
-           text-indigo-700 bg-indigo-50 border border-indigo-100
+           text-ledger-600 bg-ledger-50 border-l-2 border-gold-500
            text-sm font-semibold;
   }
 
@@ -139,16 +175,16 @@
 
   /* ── Section label ────────────────────────────────────────── */
   .section-label {
-    @apply text-xs font-semibold uppercase tracking-widest text-gray-400;
+    @apply text-xs font-semibold uppercase tracking-widest text-stone-500;
   }
 
   /* ── Divider ──────────────────────────────────────────────── */
   .divider {
-    @apply border-t border-gray-100 my-4;
+    @apply border-t border-stone-200 my-4;
   }
 
   /* ── Skeleton loader ──────────────────────────────────────── */
   .skeleton {
-    @apply animate-pulse bg-gray-100 rounded-lg;
+    @apply animate-pulse bg-stone-100 rounded-lg;
   }
 }

@@ -1,3 +1,4 @@
+// DashboardLayout.jsx
 import { useEffect } from "react";
 import { useNavigate, Outlet } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
@@ -15,7 +16,7 @@ export default function DashboardLayout() {
 
   if (loading) {
     return (
-      <div className="h-screen flex items-center justify-center bg-surface-50">
+      <div className="h-screen flex items-center justify-center bg-stone-100">
         <LoadingSpinner size="lg" text="Loading RecruitMate..." />
       </div>
     );
@@ -24,7 +25,7 @@ export default function DashboardLayout() {
   if (!company) return null;
 
   return (
-    <div className="min-h-screen bg-surface-50">
+    <div className="min-h-screen bg-stone-100">
       <Sidebar />
       <TopBar />
       <main className="ml-60 pt-14 min-h-screen">

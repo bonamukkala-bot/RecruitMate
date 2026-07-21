@@ -209,7 +209,9 @@ def get_analytics():
     candidates      = list(candidates_collection.find({"company_id": company_id}))
     total_candidates= len(candidates)
 
-    # Pipeline funnel
+    # Pipeline funnel — all counted off the single "status" field, which is the
+    # candidate's current pipeline stage (this is the source of truth used
+    # everywhere else below too, so every number on this dashboard agrees).
     funnel = {
         "screened"   : sum(1 for c in candidates if c.get("status") == "screened"),
         "shortlisted": sum(1 for c in candidates if c.get("status") == "shortlisted"),
@@ -219,8 +221,10 @@ def get_analytics():
         "rejected"   : sum(1 for c in candidates if c.get("status") == "rejected"),
     }
 
-    # Average match score
-    scores    = [c.get("match_score", 0) for c in candidates if c.get("match_score")]
+    # Average match score — check "is not None" rather than truthy, so a
+    # candidate who genuinely scored 0 is still counted instead of silently
+    # dropped (previously `if c.get("match_score")` treated 0 as "missing").
+    scores    = [c.get("match_score", 0) for c in candidates if c.get("match_score") is not None]
     avg_score = round(sum(scores) / len(scores), 1) if scores else 0
 
     # Score distribution
@@ -235,12 +239,16 @@ def get_analytics():
     job_stats = []
     for job in jobs:
         job_candidates = [c for c in candidates if c.get("job_id") == str(job["_id"])]
-        job_scores     = [c.get("match_score", 0) for c in job_candidates if c.get("match_score")]
+        job_scores     = [c.get("match_score", 0) for c in job_candidates if c.get("match_score") is not None]
         job_stats.append({
             "job_title"      : job.get("job_title", ""),
             "total_candidates": len(job_candidates),
             "avg_score"      : round(sum(job_scores) / len(job_scores), 1) if job_scores else 0,
-            "shortlisted"    : sum(1 for c in job_candidates if c.get("recommendation") == "Shortlist"),
+            # Uses "status" (current pipeline stage) — same field as the funnel
+            # above — instead of "recommendation" (the resume screener's
+            # initial verdict), so this number can never disagree with the
+            # top-level funnel's shortlisted count for the same candidates.
+            "shortlisted"    : sum(1 for c in job_candidates if c.get("status") == "shortlisted"),
         })
 
     # Top skills in demand

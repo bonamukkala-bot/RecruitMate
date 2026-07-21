@@ -15,11 +15,11 @@ import toast from "react-hot-toast";
 
 // ── Pipeline Stage Config ─────────────────────────────────────────────────────
 const STAGES = [
-  { key: "screened",    label: "Screened",    icon: Users,        color: "text-blue-400",   bg: "bg-blue-400/10"   },
-  { key: "shortlisted", label: "Shortlisted", icon: CheckCircle,  color: "text-green-400",  bg: "bg-green-400/10"  },
-  { key: "invited",     label: "Invited",     icon: Mail,         color: "text-purple-400", bg: "bg-purple-400/10" },
-  { key: "hired",       label: "Hired",       icon: Zap,          color: "text-yellow-400", bg: "bg-yellow-400/10" },
-  { key: "rejected",    label: "Rejected",    icon: AlertCircle,  color: "text-red-400",    bg: "bg-red-400/10"    }
+  { key: "screened",    label: "Screened",    icon: Users,        color: "text-ledger-600",   bg: "bg-ledger-50"   },
+  { key: "shortlisted", label: "Shortlisted", icon: CheckCircle,  color: "text-verified-600",  bg: "bg-verified-50" },
+  { key: "invited",     label: "Invited",     icon: Mail,         color: "text-gold-600",      bg: "bg-gold-50"     },
+  { key: "hired",       label: "Hired",       icon: Zap,          color: "text-ink-500",       bg: "bg-ink-50"      },
+  { key: "rejected",    label: "Rejected",    icon: AlertCircle,  color: "text-brick-600",     bg: "bg-brick-50"    }
 ];
 
 // ── Evaluate Modal ────────────────────────────────────────────────────────────
@@ -74,10 +74,10 @@ function EvaluateModal({ isOpen, onClose, candidate, onDone }) {
       }
     >
       <div className="space-y-4">
-        <p className="text-sm text-dark-400">Add interview Q&A pairs to evaluate.</p>
+        <p className="text-sm text-stone-500">Add interview Q&A pairs to evaluate.</p>
         {pairs.map((pair, i) => (
-          <div key={i} className="p-4 bg-dark-800 rounded-xl border border-dark-700 space-y-3">
-            <p className="text-xs font-medium text-dark-400">Pair {i + 1}</p>
+          <div key={i} className="p-4 bg-stone-50 rounded-xl border border-stone-200 space-y-3">
+            <p className="text-xs font-medium text-stone-500">Pair {i + 1}</p>
             <textarea
               value={pair.question}
               onChange={(e) => updatePair(i, "question", e.target.value)}
@@ -145,35 +145,35 @@ function PipelineCard({ candidate, onAction, navigate }) {
   };
 
   const scoreColor = candidate.match_score >= 70
-    ? "text-green-400"
+    ? "text-verified-600"
     : candidate.match_score >= 50
-    ? "text-yellow-400"
-    : "text-red-400";
+    ? "text-gold-600"
+    : "text-brick-600";
 
   return (
     <div
       onClick={() => navigate(`/candidates/${candidate._id}`)}
-      className="p-4 rounded-xl bg-dark-800/50 border border-dark-800 hover:border-dark-700 cursor-pointer transition-all group"
+      className="p-4 rounded-xl bg-white border border-stone-200 hover:border-stone-300 cursor-pointer transition-all group"
     >
       {/* Needs Interview Time flag */}
       {candidate.schedule_pending && (
-        <div className="flex items-center gap-1.5 mb-3 px-2 py-1 bg-yellow-500/10 border border-yellow-500/20 rounded-lg w-fit">
-          <Calendar size={11} className="text-yellow-400" />
-          <span className="text-xs font-medium text-yellow-400">Needs Interview Time</span>
+        <div className="flex items-center gap-1.5 mb-3 px-2 py-1 bg-gold-50 border border-gold-200 rounded-lg w-fit">
+          <Calendar size={11} className="text-gold-600" />
+          <span className="text-xs font-medium text-gold-700">Needs Interview Time</span>
         </div>
       )}
 
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-full bg-primary-600/20 flex items-center justify-center text-primary-400 font-bold text-sm shrink-0">
+          <div className="w-9 h-9 rounded-full bg-ledger-50 flex items-center justify-center text-ledger-600 font-bold text-sm shrink-0">
             {candidate.candidate_name?.charAt(0).toUpperCase()}
           </div>
           <div>
-            <p className="font-medium text-white text-sm">{candidate.candidate_name}</p>
-            <p className="text-xs text-dark-400 truncate max-w-[150px]">{candidate.job_title || "—"}</p>
+            <p className="font-medium text-ink-500 text-sm">{candidate.candidate_name}</p>
+            <p className="text-xs text-stone-500 truncate max-w-[150px]">{candidate.job_title || "—"}</p>
           </div>
         </div>
-        <span className={`text-lg font-bold ${scoreColor}`}>
+        <span className={`text-lg font-bold font-mono ${scoreColor}`}>
           {candidate.match_score}%
         </span>
       </div>
@@ -181,12 +181,12 @@ function PipelineCard({ candidate, onAction, navigate }) {
       {/* Skills */}
       <div className="flex flex-wrap gap-1 mb-3">
         {candidate.matched_skills?.slice(0, 3).map(s => (
-          <span key={s} className="px-1.5 py-0.5 bg-green-500/10 text-green-400 text-xs rounded border border-green-500/20">
+          <span key={s} className="px-1.5 py-0.5 bg-verified-50 text-verified-700 text-xs rounded border border-verified-200">
             {s}
           </span>
         ))}
         {candidate.missing_skills?.slice(0, 2).map(s => (
-          <span key={s} className="px-1.5 py-0.5 bg-red-500/10 text-red-400 text-xs rounded border border-red-500/20">
+          <span key={s} className="px-1.5 py-0.5 bg-brick-50 text-brick-700 text-xs rounded border border-brick-200">
             -{s}
           </span>
         ))}
@@ -194,21 +194,21 @@ function PipelineCard({ candidate, onAction, navigate }) {
 
       {/* Evaluation score if exists */}
       {candidate.evaluation && (
-        <div className="flex items-center gap-2 mb-3 p-2 bg-dark-900 rounded-lg">
-          <Zap size={12} className="text-yellow-400" />
-          <span className="text-xs text-dark-300">
-            Interview Score: <span className="text-yellow-400 font-bold">{candidate.evaluation.overall_score}/100</span>
+        <div className="flex items-center gap-2 mb-3 p-2 bg-stone-50 rounded-lg">
+          <Zap size={12} className="text-gold-600" />
+          <span className="text-xs text-stone-600">
+            Interview Score: <span className="text-gold-600 font-bold font-mono">{candidate.evaluation.overall_score}/100</span>
           </span>
-          <span className="text-xs text-dark-500">— {candidate.evaluation.hiring_recommendation}</span>
+          <span className="text-xs text-stone-400">— {candidate.evaluation.hiring_recommendation}</span>
         </div>
       )}
 
       {/* Schedule info if exists */}
       {candidate.schedule && (
-        <div className="flex items-center gap-2 mb-3 p-2 bg-primary-600/5 rounded-lg border border-primary-600/20">
-          <Calendar size={12} className="text-primary-400" />
-          <span className="text-xs text-primary-400 font-medium">{candidate.schedule.next_step}</span>
-          <span className="text-xs text-dark-500">· {candidate.schedule.scheduled_time}</span>
+        <div className="flex items-center gap-2 mb-3 p-2 bg-ledger-50 rounded-lg border border-ledger-100">
+          <Calendar size={12} className="text-ledger-600" />
+          <span className="text-xs text-ledger-600 font-medium">{candidate.schedule.next_step}</span>
+          <span className="text-xs text-stone-400">· {candidate.schedule.scheduled_time}</span>
         </div>
       )}
 
@@ -248,7 +248,7 @@ function PipelineCard({ candidate, onAction, navigate }) {
             <Calendar size={12} /> Schedule
           </Button>
         )}
-        <ChevronRight size={14} className="text-dark-500 ml-auto" />
+        <ChevronRight size={14} className="text-stone-400 ml-auto" />
       </div>
     </div>
   );
@@ -300,8 +300,8 @@ export default function Pipeline() {
 
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-white">Pipeline</h1>
-        <p className="text-dark-400 text-sm mt-1">
+        <h1 className="text-2xl font-bold text-ink-500 font-display">Pipeline</h1>
+        <p className="text-stone-500 text-sm mt-1">
           {candidates.length} candidate{candidates.length !== 1 ? "s" : ""} across all stages
         </p>
       </div>
@@ -313,12 +313,12 @@ export default function Pipeline() {
             <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg ${stage.bg}`}>
               <stage.icon size={14} className={stage.color} />
               <span className={`text-xs font-medium ${stage.color}`}>{stage.label}</span>
-              <span className="text-xs text-dark-500">
+              <span className="text-xs text-stone-400 font-mono">
                 ({getCandidatesByStage(stage.key).length})
               </span>
             </div>
             {i < STAGES.length - 1 && (
-              <ArrowRight size={14} className="text-dark-700 shrink-0" />
+              <ArrowRight size={14} className="text-stone-300 shrink-0" />
             )}
           </div>
         ))}
@@ -331,14 +331,14 @@ export default function Pipeline() {
           return (
             <div key={stage.key} className="space-y-3">
               {/* Column header */}
-              <div className={`flex items-center justify-between p-3 rounded-lg ${stage.bg} border border-white/5`}>
+              <div className={`flex items-center justify-between p-3 rounded-lg ${stage.bg} border border-stone-100`}>
                 <div className="flex items-center gap-2">
                   <stage.icon size={14} className={stage.color} />
                   <span className={`text-sm font-semibold ${stage.color}`}>
                     {stage.label}
                   </span>
                 </div>
-                <span className="text-xs text-dark-400 bg-dark-900/50 px-2 py-0.5 rounded-full">
+                <span className="text-xs text-stone-500 bg-white/60 px-2 py-0.5 rounded-full font-mono">
                   {stageCandidates.length}
                 </span>
               </div>
@@ -346,8 +346,8 @@ export default function Pipeline() {
               {/* Cards */}
               <div className="space-y-3 min-h-[100px]">
                 {stageCandidates.length === 0 ? (
-                  <div className="p-4 rounded-xl border border-dashed border-dark-800 text-center">
-                    <p className="text-dark-600 text-xs">No candidates</p>
+                  <div className="p-4 rounded-xl border border-dashed border-stone-200 text-center">
+                    <p className="text-stone-400 text-xs">No candidates</p>
                   </div>
                 ) : (
                   stageCandidates.map(c => (

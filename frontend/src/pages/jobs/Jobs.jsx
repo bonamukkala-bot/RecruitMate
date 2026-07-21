@@ -11,6 +11,7 @@ import Modal from "../../components/ui/Modal";
 import Input from "../../components/ui/Input";
 import LoadingSpinner from "../../components/ui/LoadingSpinner";
 import toast from "react-hot-toast";
+
 function CreateJobModal({ isOpen, onClose, onCreated }) {
   const [jdText,    setJdText]    = useState("");
   const [brief,     setBrief]     = useState("");
@@ -85,9 +86,9 @@ function CreateJobModal({ isOpen, onClose, onCreated }) {
     >
       <div className="space-y-4">
         {/* Mode toggle */}
-        <div className="flex gap-1 p-1 bg-dark-800 rounded-lg">
+        <div className="flex gap-1 p-1 bg-stone-100 rounded-lg">
           {[
-            { key: "ai",   label: "✨ AI Generate" },
+            { key: "ai",   label: "AI Generate" },
             { key: "text", label: "Paste Text"     },
             { key: "file", label: "Upload File"    }
           ].map(({ key, label }) => (
@@ -96,8 +97,8 @@ function CreateJobModal({ isOpen, onClose, onCreated }) {
               onClick={() => setInputMode(key)}
               className={`flex-1 py-2 rounded-md text-sm font-medium transition-all ${
                 inputMode === key
-                  ? "bg-primary-600 text-white"
-                  : "text-dark-400 hover:text-white"
+                  ? "bg-ledger-500 text-white"
+                  : "text-stone-500 hover:text-ink-500"
               }`}
             >
               {label}
@@ -109,10 +110,10 @@ function CreateJobModal({ isOpen, onClose, onCreated }) {
         {inputMode === "ai" && (
           <div className="space-y-3">
             <div>
-              <label className="text-sm font-medium text-dark-300 block mb-2">
+              <label className="text-sm font-medium text-ink-400 block mb-2">
                 Describe the role in one line
               </label>
-              <p className="text-xs text-dark-500 mb-3">
+              <p className="text-xs text-stone-500 mb-3">
                 e.g. "Senior Python developer for our fintech startup in Hyderabad"
               </p>
               <div className="flex gap-2">
@@ -128,7 +129,7 @@ function CreateJobModal({ isOpen, onClose, onCreated }) {
                   onClick={handleGenerate}
                   className="shrink-0"
                 >
-                  {generating ? "Generating..." : "✨ Generate"}
+                  {generating ? "Generating..." : "Generate"}
                 </Button>
               </div>
             </div>
@@ -136,10 +137,10 @@ function CreateJobModal({ isOpen, onClose, onCreated }) {
             {jdText && (
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <label className="text-sm font-medium text-dark-300">
+                  <label className="text-sm font-medium text-ink-400">
                     Generated JD — Review & Edit
                   </label>
-                  <span className="text-xs text-green-400">✓ Ready to post</span>
+                  <span className="stamp text-verified-600" style={{ background: "rgba(31,110,88,0.07)" }}>Ready</span>
                 </div>
                 <textarea
                   value={jdText}
@@ -151,11 +152,11 @@ function CreateJobModal({ isOpen, onClose, onCreated }) {
             )}
 
             {!jdText && (
-              <div className="border-2 border-dashed border-dark-700 rounded-xl p-8 text-center">
-                <p className="text-dark-500 text-sm">
+              <div className="border-2 border-dashed border-stone-200 rounded-xl p-8 text-center">
+                <p className="text-stone-500 text-sm">
                   Enter a brief description above and click Generate
                 </p>
-                <p className="text-dark-600 text-xs mt-1">
+                <p className="text-stone-400 text-xs mt-1">
                   AI will write a complete professional JD in seconds
                 </p>
               </div>
@@ -166,7 +167,7 @@ function CreateJobModal({ isOpen, onClose, onCreated }) {
         {/* Text mode */}
         {inputMode === "text" && (
           <div>
-            <label className="text-sm font-medium text-dark-300 block mb-2">
+            <label className="text-sm font-medium text-ink-400 block mb-2">
               Job Description
             </label>
             <textarea
@@ -182,28 +183,28 @@ function CreateJobModal({ isOpen, onClose, onCreated }) {
         {/* File upload mode */}
         {inputMode === "file" && (
           <div>
-            <label className="text-sm font-medium text-dark-300 block mb-2">
+            <label className="text-sm font-medium text-ink-400 block mb-2">
               Upload JD File
             </label>
             <div
-              className="border-2 border-dashed border-dark-700 rounded-xl p-8 text-center hover:border-primary-500 transition-all cursor-pointer"
+              className="border-2 border-dashed border-stone-200 rounded-xl p-8 text-center hover:border-ledger-400 transition-all cursor-pointer"
               onClick={() => document.getElementById("jd-file-input").click()}
             >
               {file ? (
                 <div className="space-y-2">
-                  <p className="text-green-400 font-medium">{file.name}</p>
-                  <p className="text-dark-400 text-xs">{(file.size / 1024).toFixed(1)} KB</p>
+                  <p className="text-verified-600 font-medium">{file.name}</p>
+                  <p className="text-stone-500 text-xs">{(file.size / 1024).toFixed(1)} KB</p>
                   <button
                     onClick={(e) => { e.stopPropagation(); setFile(null); }}
-                    className="text-red-400 text-xs hover:text-red-300"
+                    className="text-brick-600 text-xs hover:text-brick-700"
                   >
                     Remove file
                   </button>
                 </div>
               ) : (
                 <div className="space-y-2">
-                  <p className="text-dark-400">Click to upload PDF or Word file</p>
-                  <p className="text-dark-600 text-xs">AI will extract the JD automatically</p>
+                  <p className="text-stone-500">Click to upload PDF or Word file</p>
+                  <p className="text-stone-400 text-xs">AI will extract the JD automatically</p>
                 </div>
               )}
             </div>
@@ -218,7 +219,7 @@ function CreateJobModal({ isOpen, onClose, onCreated }) {
         )}
 
         {loading && (
-          <div className="flex items-center gap-2 text-primary-400 text-sm">
+          <div className="flex items-center gap-2 text-ledger-600 text-sm">
             <LoadingSpinner size="sm" />
             <span>AI is parsing your job description...</span>
           </div>
@@ -227,6 +228,7 @@ function CreateJobModal({ isOpen, onClose, onCreated }) {
     </Modal>
   );
 }
+
 // ── Job Card ──────────────────────────────────────────────────────────────────
 function JobCard({ job, onDelete, onClick }) {
   const [deleting, setDeleting] = useState(false);
@@ -249,18 +251,18 @@ function JobCard({ job, onDelete, onClick }) {
   return (
     <div
       onClick={onClick}
-      className="card hover:border-dark-700 cursor-pointer transition-all duration-200 group"
+      className="card card-notch hover:border-ledger-200 cursor-pointer transition-all duration-200 group"
     >
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-primary-600/20 rounded-xl flex items-center justify-center">
-            <Briefcase size={18} className="text-primary-400" />
+          <div className="w-10 h-10 bg-ledger-50 rounded-xl flex items-center justify-center">
+            <Briefcase size={18} className="text-ledger-600" />
           </div>
           <div>
-            <h3 className="font-semibold text-white group-hover:text-primary-400 transition-colors">
+            <h3 className="font-semibold text-ink-500 group-hover:text-ledger-600 transition-colors">
               {job.job_title}
             </h3>
-            <p className="text-xs text-dark-400">{job.experience_required} experience</p>
+            <p className="text-xs text-stone-500">{job.experience_required} experience</p>
           </div>
         </div>
         <Badge status={job.status}>{job.status}</Badge>
@@ -271,42 +273,42 @@ function JobCard({ job, onDelete, onClick }) {
         {job.required_skills?.slice(0, 4).map((skill) => (
           <span
             key={skill}
-            className="px-2 py-0.5 bg-dark-800 text-dark-300 text-xs rounded-md border border-dark-700"
+            className="px-2 py-0.5 bg-stone-50 text-stone-600 text-xs rounded-md border border-stone-200"
           >
             {skill}
           </span>
         ))}
         {job.required_skills?.length > 4 && (
-          <span className="px-2 py-0.5 bg-dark-800 text-dark-400 text-xs rounded-md border border-dark-700">
+          <span className="px-2 py-0.5 bg-stone-50 text-stone-500 text-xs rounded-md border border-stone-200">
             +{job.required_skills.length - 4} more
           </span>
         )}
       </div>
 
       {/* Footer */}
-      <div className="flex items-center justify-between pt-3 border-t border-dark-800">
-        <div className="flex items-center gap-4 text-xs text-dark-400">
+      <div className="flex items-center justify-between pt-3 border-t border-stone-200">
+        <div className="flex items-center gap-4 text-xs text-stone-500">
           <span className="flex items-center gap-1">
             <MapPin size={12} /> {job.location}
           </span>
           <span className="flex items-center gap-1">
             <Clock size={12} /> {job.job_type}
           </span>
-          <span className="flex items-center gap-1">
+          <span className="flex items-center gap-1 font-mono">
             <Users size={12} /> {job.candidates_count || 0} candidates
           </span>
         </div>
         <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
           <button
             onClick={(e) => { e.stopPropagation(); }}
-            className="p-1.5 text-dark-400 hover:text-white hover:bg-dark-700 rounded-lg transition-all"
+            className="p-1.5 text-stone-500 hover:text-ink-500 hover:bg-stone-100 rounded-lg transition-all"
           >
             <Eye size={14} />
           </button>
           <button
             onClick={handleDelete}
             disabled={deleting}
-            className="p-1.5 text-dark-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all"
+            className="p-1.5 text-stone-500 hover:text-brick-600 hover:bg-brick-50 rounded-lg transition-all"
           >
             <Trash2 size={14} />
           </button>
@@ -374,8 +376,8 @@ export default function Jobs() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Jobs</h1>
-          <p className="text-dark-400 text-sm mt-1">
+          <h1 className="text-2xl font-bold text-ink-500 font-display">Jobs</h1>
+          <p className="text-stone-500 text-sm mt-1">
             {jobs.length} job{jobs.length !== 1 ? "s" : ""} posted
           </p>
         </div>
@@ -395,9 +397,9 @@ export default function Jobs() {
       {/* Jobs Grid */}
       {filtered.length === 0 ? (
         <div className="text-center py-20">
-          <Briefcase size={48} className="text-dark-700 mx-auto mb-4" />
-          <p className="text-dark-400 font-medium">No jobs found</p>
-          <p className="text-dark-600 text-sm mt-1">
+          <Briefcase size={48} className="text-stone-300 mx-auto mb-4" />
+          <p className="text-stone-500 font-medium">No jobs found</p>
+          <p className="text-stone-400 text-sm mt-1">
             {search ? "Try a different search" : "Post your first job to get started"}
           </p>
           {!search && (

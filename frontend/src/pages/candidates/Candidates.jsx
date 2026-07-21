@@ -37,7 +37,6 @@ export default function Candidates() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Re-fetch from backend whenever advanced filters change (debounced)
   useEffect(() => {
     const timer = setTimeout(() => {
       fetchCandidates();
@@ -46,7 +45,6 @@ export default function Candidates() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [skill, minScore, maxScore, dateFrom, dateTo]);
 
-  // Local text search + status tab filtering on top of whatever set is loaded
   useEffect(() => {
     let result = candidates;
     if (status !== "all") {
@@ -156,8 +154,8 @@ export default function Candidates() {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-white">Candidates</h1>
-          <p className="text-dark-400 text-sm mt-1">
+          <h1 className="text-2xl font-bold text-ink-500 font-display">Candidates</h1>
+          <p className="text-stone-500 text-sm mt-1">
             {candidates.length} candidate{candidates.length !== 1 ? "s" : ""}
             {advancedActive ? " matching filters" : " across all jobs"}
           </p>
@@ -165,7 +163,7 @@ export default function Candidates() {
         <button
           onClick={handleExport}
           disabled={exporting}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-dark-800 text-dark-200 border border-dark-700 hover:text-white hover:border-dark-600 transition-all disabled:opacity-50"
+          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-white text-ink-400 border border-stone-200 hover:text-ink-500 hover:border-stone-300 transition-all disabled:opacity-50"
         >
           <Download size={14} />
           {exporting ? "Exporting..." : "Export CSV"}
@@ -183,15 +181,15 @@ export default function Candidates() {
           />
         </div>
         <div className="flex items-center gap-2 overflow-x-auto pb-1">
-          <Filter size={14} className="text-dark-500 shrink-0" />
+          <Filter size={14} className="text-stone-400 shrink-0" />
           {STATUS_FILTERS.map((s) => (
             <button
               key={s}
               onClick={() => setStatus(s)}
               className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${
                 status === s
-                  ? "bg-primary-600 text-white"
-                  : "bg-dark-800 text-dark-400 hover:text-white border border-dark-700"
+                  ? "bg-ledger-500 text-white"
+                  : "bg-white text-stone-500 hover:text-ink-500 border border-stone-200"
               }`}
             >
               {s.charAt(0).toUpperCase() + s.slice(1)}
@@ -202,14 +200,14 @@ export default function Candidates() {
           onClick={() => setShowAdvanced((v) => !v)}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap border transition-all ${
             showAdvanced || advancedActive
-              ? "bg-primary-600/20 text-primary-400 border-primary-600/40"
-              : "bg-dark-800 text-dark-400 border-dark-700 hover:text-white"
+              ? "bg-ledger-50 text-ledger-600 border-ledger-200"
+              : "bg-white text-stone-500 border-stone-200 hover:text-ink-500"
           }`}
         >
           <SlidersHorizontal size={14} />
           Advanced
           {advancedActive && (
-            <span className="w-1.5 h-1.5 rounded-full bg-primary-400" />
+            <span className="w-1.5 h-1.5 rounded-full bg-ledger-500" />
           )}
         </button>
       </div>
@@ -219,7 +217,7 @@ export default function Candidates() {
         <div className="card p-4 flex flex-col gap-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
             <div>
-              <label className="text-xs text-dark-400 mb-1 block">Skill</label>
+              <label className="text-xs text-stone-500 mb-1 block">Skill</label>
               <Input
                 placeholder="e.g. Python"
                 value={skill}
@@ -227,7 +225,7 @@ export default function Candidates() {
               />
             </div>
             <div>
-              <label className="text-xs text-dark-400 mb-1 block">Min score</label>
+              <label className="text-xs text-stone-500 mb-1 block">Min score</label>
               <Input
                 type="number"
                 min="0"
@@ -238,7 +236,7 @@ export default function Candidates() {
               />
             </div>
             <div>
-              <label className="text-xs text-dark-400 mb-1 block">Max score</label>
+              <label className="text-xs text-stone-500 mb-1 block">Max score</label>
               <Input
                 type="number"
                 min="0"
@@ -249,7 +247,7 @@ export default function Candidates() {
               />
             </div>
             <div>
-              <label className="text-xs text-dark-400 mb-1 block">Date from</label>
+              <label className="text-xs text-stone-500 mb-1 block">Date from</label>
               <Input
                 type="date"
                 value={dateFrom}
@@ -257,7 +255,7 @@ export default function Candidates() {
               />
             </div>
             <div>
-              <label className="text-xs text-dark-400 mb-1 block">Date to</label>
+              <label className="text-xs text-stone-500 mb-1 block">Date to</label>
               <Input
                 type="date"
                 value={dateTo}
@@ -268,7 +266,7 @@ export default function Candidates() {
           {advancedActive && (
             <button
               onClick={clearAdvanced}
-              className="flex items-center gap-1.5 text-xs text-dark-400 hover:text-white w-fit"
+              className="flex items-center gap-1.5 text-xs text-stone-500 hover:text-ink-500 w-fit"
             >
               <X size={13} />
               Clear advanced filters
@@ -280,9 +278,9 @@ export default function Candidates() {
       {/* Table */}
       {filtered.length === 0 ? (
         <div className="text-center py-20">
-          <Users size={48} className="text-dark-700 mx-auto mb-4" />
-          <p className="text-dark-400 font-medium">No candidates found</p>
-          <p className="text-dark-600 text-sm mt-1">
+          <Users size={48} className="text-stone-300 mx-auto mb-4" />
+          <p className="text-stone-500 font-medium">No candidates found</p>
+          <p className="text-stone-400 text-sm mt-1">
             {search || status !== "all" || advancedActive
               ? "Try adjusting your filters"
               : "Screen your first candidate from a job posting"
@@ -293,7 +291,7 @@ export default function Candidates() {
         <div className="card p-0 overflow-hidden">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-dark-800 text-dark-400 text-xs uppercase tracking-wider">
+              <tr className="border-b border-stone-200 text-stone-500 text-xs uppercase tracking-wider">
                 <th className="text-left font-medium px-4 py-4 w-10"></th>
                 <th className="text-left font-medium px-6 py-4">Candidate</th>
                 <th className="text-left font-medium px-6 py-4">Job</th>
@@ -307,37 +305,37 @@ export default function Candidates() {
                 <tr
                   key={c._id}
                   onClick={() => navigate(`/candidates/${c._id}`)}
-                  className="border-b border-dark-800/60 hover:bg-dark-800/40 cursor-pointer transition-all"
+                  className="border-b border-stone-100 hover:bg-stone-50 cursor-pointer transition-all"
                 >
                   <td className="px-4 py-4" onClick={(e) => e.stopPropagation()}>
                     <input
                       type="checkbox"
                       checked={selected.includes(c._id)}
                       onChange={() => toggleSelect(c._id)}
-                      className="w-4 h-4 rounded border-dark-600 bg-dark-800 text-primary-600 focus:ring-primary-600 cursor-pointer"
+                      className="w-4 h-4 rounded border-stone-300 bg-white text-ledger-500 focus:ring-ledger-200 cursor-pointer"
                     />
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-full bg-primary-600/20 flex items-center justify-center text-primary-400 font-bold text-xs shrink-0">
+                      <div className="w-9 h-9 rounded-full bg-ledger-50 flex items-center justify-center text-ledger-600 font-bold text-xs shrink-0">
                         {c.candidate_name?.charAt(0).toUpperCase()}
                       </div>
                       <div>
-                        <p className="font-medium text-white">{c.candidate_name}</p>
-                        <p className="text-xs text-dark-400">{c.candidate_email}</p>
+                        <p className="font-medium text-ink-500">{c.candidate_name}</p>
+                        <p className="text-xs text-stone-500">{c.candidate_email}</p>
                       </div>
                     </div>
                   </td>
-                  <td className="px-6 py-4 text-dark-300 text-sm">
+                  <td className="px-6 py-4 text-stone-600 text-sm">
                     {c.job_title || "—"}
                   </td>
                   <td className="px-6 py-4 text-center">
-                    <span className={`font-bold text-base ${
+                    <span className={`font-bold text-base font-mono ${
                       c.match_score >= 70
-                        ? "text-green-400"
+                        ? "text-verified-600"
                         : c.match_score >= 50
-                        ? "text-yellow-400"
-                        : "text-red-400"
+                        ? "text-gold-600"
+                        : "text-brick-600"
                     }`}>
                       {c.match_score}%
                     </span>
@@ -345,10 +343,10 @@ export default function Candidates() {
                   <td className="px-6 py-4 text-center">
                     <div className="flex items-center justify-center gap-1.5">
                       {c.recommendation === "Shortlist" || c.recommendation === "Strongly Recommend"
-                        ? <CheckCircle size={13} className="text-green-400" />
-                        : <XCircle    size={13} className="text-red-400"   />
+                        ? <CheckCircle size={13} className="text-verified-600" />
+                        : <XCircle    size={13} className="text-brick-600"   />
                       }
-                      <span className="text-xs text-dark-300">{c.recommendation}</span>
+                      <span className="text-xs text-stone-600">{c.recommendation}</span>
                     </div>
                   </td>
                   <td className="px-6 py-4 text-center">
@@ -363,20 +361,20 @@ export default function Candidates() {
 
       {/* Floating compare bar */}
       {selected.length >= 2 && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-dark-800 border border-dark-700 rounded-xl shadow-2xl px-5 py-3 flex items-center gap-4">
-          <span className="text-sm text-dark-200">
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-ink-500 border border-ink-600 rounded-xl shadow-card-lg px-5 py-3 flex items-center gap-4">
+          <span className="text-sm text-ink-100">
             {selected.length} candidate{selected.length !== 1 ? "s" : ""} selected
           </span>
           <button
             onClick={handleCompare}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-primary-600 text-white hover:bg-primary-700 transition-all"
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-gold-500 text-ink-700 hover:bg-gold-400 transition-all"
           >
             <GitCompare size={14} />
             Compare
           </button>
           <button
             onClick={() => setSelected([])}
-            className="text-dark-400 hover:text-white text-sm"
+            className="text-ink-200 hover:text-white text-sm"
           >
             Clear
           </button>

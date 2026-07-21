@@ -98,13 +98,13 @@ function ScreenCandidateModal({ isOpen, onClose, jobId, onScreened }) {
         />
 
         {/* Toggle */}
-        <div className="flex gap-2 p-1 bg-dark-800 rounded-lg">
+        <div className="flex gap-2 p-1 bg-stone-100 rounded-lg">
           <button
             onClick={() => setInputMode("text")}
             className={`flex-1 py-2 rounded-md text-sm font-medium transition-all ${
               inputMode === "text"
-                ? "bg-primary-600 text-white"
-                : "text-dark-400 hover:text-white"
+                ? "bg-ledger-500 text-white"
+                : "text-stone-500 hover:text-ink-500"
             }`}
           >
             Paste Resume
@@ -113,8 +113,8 @@ function ScreenCandidateModal({ isOpen, onClose, jobId, onScreened }) {
             onClick={() => setInputMode("file")}
             className={`flex-1 py-2 rounded-md text-sm font-medium transition-all ${
               inputMode === "file"
-                ? "bg-primary-600 text-white"
-                : "text-dark-400 hover:text-white"
+                ? "bg-ledger-500 text-white"
+                : "text-stone-500 hover:text-ink-500"
             }`}
           >
             Upload PDF/Word
@@ -124,10 +124,10 @@ function ScreenCandidateModal({ isOpen, onClose, jobId, onScreened }) {
         {/* Text input */}
         {inputMode === "text" && (
           <div>
-            <label className="text-sm font-medium text-dark-300 block mb-2">
+            <label className="text-sm font-medium text-ink-400 block mb-2">
               Resume Text
             </label>
-            <p className="text-xs text-dark-500 mb-2">
+            <p className="text-xs text-stone-500 mb-2">
               Paste the candidate's resume. AI will score it against job requirements.
             </p>
             <textarea
@@ -144,31 +144,31 @@ function ScreenCandidateModal({ isOpen, onClose, jobId, onScreened }) {
         {/* File upload */}
         {inputMode === "file" && (
           <div>
-            <label className="text-sm font-medium text-dark-300 block mb-2">
+            <label className="text-sm font-medium text-ink-400 block mb-2">
               Upload Resume File
             </label>
-            <p className="text-xs text-dark-500 mb-3">
+            <p className="text-xs text-stone-500 mb-3">
               Upload a PDF or Word (.docx) resume file.
             </p>
             <div
-              className="border-2 border-dashed border-dark-700 rounded-xl p-8 text-center hover:border-primary-500 transition-all cursor-pointer"
+              className="border-2 border-dashed border-stone-200 rounded-xl p-8 text-center hover:border-ledger-400 transition-all cursor-pointer"
               onClick={() => document.getElementById("resume-file-input").click()}
             >
               {file ? (
                 <div className="space-y-2">
-                  <p className="text-green-400 font-medium">{file.name}</p>
-                  <p className="text-dark-400 text-xs">{(file.size / 1024).toFixed(1)} KB</p>
+                  <p className="text-verified-600 font-medium">{file.name}</p>
+                  <p className="text-stone-500 text-xs">{(file.size / 1024).toFixed(1)} KB</p>
                   <button
                     onClick={(e) => { e.stopPropagation(); setFile(null); }}
-                    className="text-red-400 text-xs hover:text-red-300"
+                    className="text-brick-600 text-xs hover:text-brick-700"
                   >
                     Remove file
                   </button>
                 </div>
               ) : (
                 <div className="space-y-2">
-                  <p className="text-dark-400">Click to upload resume</p>
-                  <p className="text-dark-600 text-xs">PDF or Word (.docx) up to 10MB</p>
+                  <p className="text-stone-500">Click to upload resume</p>
+                  <p className="text-stone-400 text-xs">PDF or Word (.docx) up to 10MB</p>
                 </div>
               )}
             </div>
@@ -183,7 +183,7 @@ function ScreenCandidateModal({ isOpen, onClose, jobId, onScreened }) {
         )}
 
         {loading && (
-          <div className="flex items-center gap-2 text-primary-400 text-sm">
+          <div className="flex items-center gap-2 text-ledger-600 text-sm">
             <LoadingSpinner size="sm" />
             <span>AI is screening the candidate...</span>
           </div>
@@ -198,10 +198,10 @@ function CandidateRow({ candidate, onDelete, onClick, selected, onToggleSelect }
   const [deleting, setDeleting] = useState(false);
 
   const scoreColor = candidate.match_score >= 70
-    ? "text-green-400"
+    ? "text-verified-600"
     : candidate.match_score >= 50
-    ? "text-yellow-400"
-    : "text-red-400";
+    ? "text-gold-600"
+    : "text-brick-600";
 
   const handleDelete = async (e) => {
     e.stopPropagation();
@@ -221,8 +221,8 @@ function CandidateRow({ candidate, onDelete, onClick, selected, onToggleSelect }
   return (
     <div
       onClick={onClick}
-      className={`flex items-center justify-between p-4 rounded-xl bg-dark-800/50 border cursor-pointer transition-all group ${
-        selected ? "border-primary-600 ring-1 ring-primary-600/40" : "border-dark-800 hover:border-dark-700"
+      className={`flex items-center justify-between p-4 rounded-xl bg-white border cursor-pointer transition-all group ${
+        selected ? "border-ledger-500 ring-1 ring-ledger-100" : "border-stone-200 hover:border-stone-300"
       }`}
     >
       <div className="flex items-center gap-4">
@@ -232,41 +232,41 @@ function CandidateRow({ candidate, onDelete, onClick, selected, onToggleSelect }
             type="checkbox"
             checked={selected}
             onChange={() => onToggleSelect(candidate._id)}
-            className="w-4 h-4 rounded border-dark-600 bg-dark-800 text-primary-600 focus:ring-primary-600 cursor-pointer"
+            className="w-4 h-4 rounded border-stone-300 bg-white text-ledger-500 focus:ring-ledger-200 cursor-pointer"
           />
         </div>
 
         {/* Avatar */}
-        <div className="w-10 h-10 rounded-full bg-primary-600/20 flex items-center justify-center text-primary-400 font-bold text-sm">
+        <div className="w-10 h-10 rounded-full bg-ledger-50 flex items-center justify-center text-ledger-600 font-bold text-sm">
           {candidate.candidate_name?.charAt(0).toUpperCase()}
         </div>
 
         {/* Info */}
         <div>
-          <p className="font-medium text-white text-sm">{candidate.candidate_name}</p>
-          <p className="text-xs text-dark-400">{candidate.candidate_email}</p>
+          <p className="font-medium text-ink-500 text-sm">{candidate.candidate_name}</p>
+          <p className="text-xs text-stone-500">{candidate.candidate_email}</p>
         </div>
       </div>
 
       <div className="flex items-center gap-6">
         {/* Score */}
         <div className="text-center">
-          <p className={`text-lg font-bold ${scoreColor}`}>
+          <p className={`text-lg font-bold font-mono ${scoreColor}`}>
             {candidate.match_score}%
           </p>
-          <p className="text-xs text-dark-500">Match</p>
+          <p className="text-xs text-stone-500">Match</p>
         </div>
 
         {/* Recommendation */}
         <div className="hidden md:flex items-center gap-1.5">
           {candidate.recommendation === "Shortlist"
-            ? <CheckCircle size={14} className="text-green-400" />
-            : <XCircle size={14} className="text-red-400" />
+            ? <CheckCircle size={14} className="text-verified-600" />
+            : <XCircle size={14} className="text-brick-600" />
           }
           <span className={`text-xs font-medium ${
             candidate.recommendation === "Shortlist"
-              ? "text-green-400"
-              : "text-red-400"
+              ? "text-verified-600"
+              : "text-brick-600"
           }`}>
             {candidate.recommendation}
           </span>
@@ -280,11 +280,11 @@ function CandidateRow({ candidate, onDelete, onClick, selected, onToggleSelect }
           <button
             onClick={handleDelete}
             disabled={deleting}
-            className="p-1.5 text-dark-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all"
+            className="p-1.5 text-stone-500 hover:text-brick-600 hover:bg-brick-50 rounded-lg transition-all"
           >
             <Trash2 size={14} />
           </button>
-          <ChevronRight size={16} className="text-dark-500" />
+          <ChevronRight size={16} className="text-stone-400" />
         </div>
       </div>
     </div>
@@ -308,9 +308,9 @@ export default function JobDetail() {
   const fetchData = async () => {
     try {
       const [jobRes, candsRes] = await Promise.all([
-  jobsAPI.getOne(id),
-  candidatesAPI.getAllByJob(id)
-]);
+        jobsAPI.getOne(id),
+        candidatesAPI.getAllByJob(id)
+      ]);
       setJob(jobRes.data.job);
       setCandidates(candsRes.data.candidates || []);
     } catch {
@@ -372,13 +372,13 @@ export default function JobDetail() {
       <div className="flex items-center gap-4">
         <button
           onClick={() => navigate("/jobs")}
-          className="p-2 text-dark-400 hover:text-white hover:bg-dark-800 rounded-lg transition-all"
+          className="p-2 text-stone-500 hover:text-ink-500 hover:bg-stone-100 rounded-lg transition-all"
         >
           <ArrowLeft size={20} />
         </button>
         <div className="flex-1">
-          <h1 className="text-2xl font-bold text-white">{job.job_title}</h1>
-          <div className="flex items-center gap-4 mt-1 text-dark-400 text-sm">
+          <h1 className="text-2xl font-bold text-ink-500 font-display">{job.job_title}</h1>
+          <div className="flex items-center gap-4 mt-1 text-stone-500 text-sm">
             <span className="flex items-center gap-1">
               <MapPin size={13} /> {job.location}
             </span>
@@ -396,18 +396,18 @@ export default function JobDetail() {
       {/* Stats row */}
       <div className="grid grid-cols-3 gap-4">
         <div className="card text-center">
-          <p className="text-2xl font-bold text-white">{candidates.length}</p>
-          <p className="text-dark-400 text-sm">Total Candidates</p>
+          <p className="text-2xl font-bold text-ink-500 font-mono">{candidates.length}</p>
+          <p className="text-stone-500 text-sm">Total Candidates</p>
         </div>
         <div className="card text-center">
-          <p className="text-2xl font-bold text-green-400">
+          <p className="text-2xl font-bold text-verified-600 font-mono">
             {candidates.filter(c => c.recommendation === "Shortlist").length}
           </p>
-          <p className="text-dark-400 text-sm">Shortlisted</p>
+          <p className="text-stone-500 text-sm">Shortlisted</p>
         </div>
         <div className="card text-center">
-          <p className="text-2xl font-bold text-primary-400">{avgScore}%</p>
-          <p className="text-dark-400 text-sm">Avg Match Score</p>
+          <p className="text-2xl font-bold text-gold-600 font-mono">{avgScore}%</p>
+          <p className="text-stone-500 text-sm">Avg Match Score</p>
         </div>
       </div>
 
@@ -417,7 +417,7 @@ export default function JobDetail() {
         {/* Candidates list */}
         <div className="lg:col-span-2 space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="font-semibold text-white">
+            <h2 className="font-semibold text-ink-500 font-display">
               Candidates ({candidates.length})
             </h2>
             <Button onClick={() => setShowModal(true)}>
@@ -427,8 +427,8 @@ export default function JobDetail() {
 
           {candidates.length === 0 ? (
             <div className="card text-center py-12">
-              <Users size={40} className="text-dark-600 mx-auto mb-3" />
-              <p className="text-dark-400">No candidates screened yet</p>
+              <Users size={40} className="text-stone-300 mx-auto mb-3" />
+              <p className="text-stone-500">No candidates screened yet</p>
               <Button
                 className="mt-4 mx-auto"
                 onClick={() => setShowModal(true)}
@@ -455,12 +455,12 @@ export default function JobDetail() {
         {/* Job Details sidebar */}
         <div className="space-y-4">
           <div className="card">
-            <h3 className="font-semibold text-white mb-3">Required Skills</h3>
+            <h3 className="font-semibold text-ink-500 mb-3">Required Skills</h3>
             <div className="flex flex-wrap gap-2">
               {job.required_skills?.map((skill) => (
                 <span
                   key={skill}
-                  className="px-2.5 py-1 bg-primary-600/10 text-primary-400 border border-primary-600/20 text-xs rounded-lg font-medium"
+                  className="px-2.5 py-1 bg-ledger-50 text-ledger-600 border border-ledger-100 text-xs rounded-lg font-medium"
                 >
                   {skill}
                 </span>
@@ -469,11 +469,11 @@ export default function JobDetail() {
           </div>
 
           <div className="card">
-            <h3 className="font-semibold text-white mb-3">Responsibilities</h3>
+            <h3 className="font-semibold text-ink-500 mb-3">Responsibilities</h3>
             <ul className="space-y-2">
               {job.responsibilities?.map((r, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm text-dark-300">
-                  <CheckCircle size={14} className="text-green-400 mt-0.5 shrink-0" />
+                <li key={i} className="flex items-start gap-2 text-sm text-ink-400">
+                  <CheckCircle size={14} className="text-verified-600 mt-0.5 shrink-0" />
                   {r}
                 </li>
               ))}
@@ -482,11 +482,11 @@ export default function JobDetail() {
 
           {job.qualifications?.length > 0 && (
             <div className="card">
-              <h3 className="font-semibold text-white mb-3">Qualifications</h3>
+              <h3 className="font-semibold text-ink-500 mb-3">Qualifications</h3>
               <ul className="space-y-2">
                 {job.qualifications?.map((q, i) => (
-                  <li key={i} className="flex items-start gap-2 text-sm text-dark-300">
-                    <CheckCircle size={14} className="text-primary-400 mt-0.5 shrink-0" />
+                  <li key={i} className="flex items-start gap-2 text-sm text-ink-400">
+                    <CheckCircle size={14} className="text-ledger-600 mt-0.5 shrink-0" />
                     {q}
                   </li>
                 ))}
@@ -506,20 +506,20 @@ export default function JobDetail() {
 
       {/* Floating compare bar */}
       {selected.length >= 2 && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-dark-800 border border-dark-700 rounded-xl shadow-2xl px-5 py-3 flex items-center gap-4">
-          <span className="text-sm text-dark-200">
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-ink-500 border border-ink-600 rounded-xl shadow-card-lg px-5 py-3 flex items-center gap-4">
+          <span className="text-sm text-ink-100">
             {selected.length} candidate{selected.length !== 1 ? "s" : ""} selected
           </span>
           <button
             onClick={handleCompare}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-primary-600 text-white hover:bg-primary-700 transition-all"
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-gold-500 text-ink-700 hover:bg-gold-400 transition-all"
           >
             <GitCompare size={14} />
             Compare
           </button>
           <button
             onClick={() => setSelected([])}
-            className="text-dark-400 hover:text-white text-sm"
+            className="text-ink-200 hover:text-white text-sm"
           >
             Clear
           </button>

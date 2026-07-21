@@ -416,6 +416,13 @@ def submit_public_interview(token):
                     "terminated"         : True,
                     "termination_reason" : termination_reason,
                     "status"             : "terminated",
+                    # Keep "recommendation" in sync with "status" so pages that
+                    # display the resume-screener's original verdict (e.g.
+                    # CandidateDetail's Match Score card) don't keep showing a
+                    # stale "Shortlist" from intake alongside a "terminated"
+                    # badge. Without this, the two fields silently diverge
+                    # the moment an interview gets cut off.
+                    "recommendation"     : "Terminated",
                     "schedule_pending"   : False,
                     "updated_at"         : datetime.now(timezone.utc)
                 }}
@@ -464,9 +471,11 @@ def submit_public_interview(token):
         SHORTLIST_THRESHOLD = 70
         if overall_score >= SHORTLIST_THRESHOLD:
             final_status    = "shortlisted"
+            final_recommendation = "Shortlist"
             schedule_pending = True
         else:
             final_status    = "rejected"
+            final_recommendation = "Reject"
             schedule_pending = False
 
         # ── Save everything ───────────────────────────────────────────────────
@@ -480,6 +489,10 @@ def submit_public_interview(token):
                 "evaluation"        : eval_data,
                 "schedule"          : schedule_data,
                 "status"            : final_status,
+                # Same sync as the terminated branch above: the post-interview
+                # decision is the definitive verdict, so it overwrites whatever
+                # "Shortlist"/"Reject" the resume screener set at intake.
+                "recommendation"    : final_recommendation,
                 "schedule_pending"  : schedule_pending,
                 "updated_at"        : datetime.now(timezone.utc)
             }}

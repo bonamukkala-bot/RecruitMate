@@ -29,6 +29,11 @@ Return ONLY this JSON shape — no extra keys, no markdown fences:
   "location": "string"
 }}
 
+Rules for the "location" field specifically:
+- Only put a location if the job description actually names a real city, region, or "Remote" / "Hybrid" / "On-site" arrangement.
+- If no location is mentioned anywhere in the text, set "location" to the exact string "Not specified". Do not invent one.
+- Never output a placeholder, template variable, or bracketed value such as [City], [Location], TBD, or similar. Either a real value or exactly "Not specified".
+
 JOB DESCRIPTION:
 {jd_text}"""
 
@@ -40,6 +45,20 @@ _FENCE = re.compile(r"```(?:json)?\s*|\s*```")
 
 def _clean(text: str) -> str:
     return _FENCE.sub("", text).strip()
+
+# ── Utility: catch any placeholder-style value the LLM slips through with ───
+# Matches things like [City], [Location], {City}, <City>, TBD, N/A, etc.
+_PLACEHOLDER_PATTERN = re.compile(
+    r"^\s*(\[.*\]|\{.*\}|<.*>|TBD|N/?A|TODO|XXX+)\s*$",
+    re.IGNORECASE
+)
+
+def _sanitize_location(value) -> str:
+    if not isinstance(value, str) or not value.strip():
+        return "Not specified"
+    if _PLACEHOLDER_PATTERN.match(value.strip()):
+        return "Not specified"
+    return value.strip()
 
 # ── Main public function ─────────────────────────────────────────────────────
 def parse_jd(jd_text: str) -> dict:
@@ -64,6 +83,10 @@ def parse_jd(jd_text: str) -> dict:
         missing = _REQUIRED - parsed.keys()
         if missing:
             raise ValueError(f"LLM omitted required fields: {missing}")
+
+        # Safety net: never let a bracket/template placeholder reach the DB or UI,
+        # regardless of what the LLM actually returned for location.
+        parsed["location"] = _sanitize_location(parsed.get("location"))
 
         return {"success": True, "data": parsed}
 
