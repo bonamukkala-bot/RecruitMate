@@ -2,11 +2,35 @@ import sib_api_v3_sdk
 from sib_api_v3_sdk.rest import ApiException
 from datetime import datetime, timezone, timedelta
 from flask import Blueprint, request, jsonify
+import requests
 from utils.db import companies_collection, otp_collection
 from utils.auth_helper import hash_password, verify_password, generate_token, generate_otp
 from config import Config
 
 auth_bp = Blueprint("auth", __name__)
+
+# ── Verify Cloudflare Turnstile token ──────────────────────────────────────────
+def verify_turnstile(token: str, remote_ip: str = None) -> bool:
+    if not token:
+        return False
+    try:
+        payload = {
+            "secret": Config.TURNSTILE_SECRET_KEY,
+            "response": token
+        }
+        if remote_ip:
+            payload["remoteip"] = remote_ip
+
+        resp = requests.post(
+            "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+            data=payload,
+            timeout=5
+        )
+        result = resp.json()
+        return result.get("success", False)
+    except Exception as e:
+        print(f"Turnstile verification error: {e}")
+        return False
 
 # ── Send OTP email via Brevo ──────────────────────────────────────────────────
 def send_otp_email(to_email: str, otp: str, company_name: str) -> bool:
@@ -59,6 +83,10 @@ def send_otp_email(to_email: str, otp: str, company_name: str) -> bool:
 @auth_bp.route("/register", methods=["POST"])
 def register():
     body = request.get_json()
+
+    turnstile_token = body.get("turnstile_token")
+    if not verify_turnstile(turnstile_token, request.remote_addr):
+        return jsonify({"success": False, "error": "CAPTCHA verification failed. Please try again."}), 400
 
     required = {"email", "password", "company_name", "full_name"}
     missing  = required - body.keys()

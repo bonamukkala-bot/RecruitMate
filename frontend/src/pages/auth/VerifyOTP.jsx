@@ -15,7 +15,6 @@ export default function VerifyOTP() {
 
   const email = location.state?.email || "";
 
-  // ── Handle OTP input ─────────────────────────────────────────────────────
   const handleChange = (index, value) => {
     if (!/^\d*$/.test(value)) return;
     const newOtp    = [...otp];
@@ -67,32 +66,28 @@ export default function VerifyOTP() {
   };
 
   return (
-    <div className="min-h-screen bg-dark-950 flex items-center justify-center p-4">
-      {/* Background glow */}
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-96 h-96 bg-primary-600/10 rounded-full blur-3xl" />
+        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-96 h-96 bg-indigo-100 rounded-full blur-3xl opacity-40" />
       </div>
 
       <div className="w-full max-w-md relative">
-        {/* Logo */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 bg-primary-600 rounded-2xl mb-4 shadow-lg shadow-primary-600/25">
+          <div className="inline-flex items-center justify-center w-14 h-14 bg-indigo-600 rounded-2xl mb-4 shadow-lg shadow-indigo-200">
             <Bot size={28} className="text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-white">Verify Your Email</h1>
-          <p className="text-dark-400 mt-1 text-sm">
+          <h1 className="text-2xl font-bold text-gray-900">Verify Your Email</h1>
+          <p className="text-gray-500 mt-1 text-sm">
             We sent a 6-digit code to
           </p>
           <div className="flex items-center justify-center gap-2 mt-1">
-            <Mail size={14} className="text-primary-400" />
-            <p className="text-primary-400 text-sm font-medium">{email}</p>
+            <Mail size={14} className="text-indigo-600" />
+            <p className="text-indigo-600 text-sm font-medium">{email}</p>
           </div>
         </div>
 
-        {/* Card */}
-        <div className="card border-dark-800 shadow-2xl">
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-card-md p-8">
           <form onSubmit={handleSubmit} className="space-y-6">
-            {/* OTP inputs */}
             <div className="flex gap-3 justify-center" onPaste={handlePaste}>
               {otp.map((digit, index) => (
                 <input
@@ -104,7 +99,7 @@ export default function VerifyOTP() {
                   value={digit}
                   onChange={(e) => handleChange(index, e.target.value)}
                   onKeyDown={(e) => handleKeyDown(index, e)}
-                  className="w-12 h-12 text-center text-xl font-bold bg-dark-800 border border-dark-700 rounded-xl text-white focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 transition-all"
+                  className="w-12 h-12 text-center text-xl font-bold bg-white border border-gray-300 rounded-xl text-gray-900 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
                 />
               ))}
             </div>
@@ -118,9 +113,9 @@ export default function VerifyOTP() {
             </Button>
           </form>
 
-          <p className="text-center text-dark-400 text-sm mt-6">
+          <p className="text-center text-gray-500 text-sm mt-6">
             Wrong email?{" "}
-            <Link to="/register" className="text-primary-400 hover:text-primary-300 font-medium">
+            <Link to="/register" className="text-indigo-600 hover:text-indigo-700 font-medium">
               Go back
             </Link>
           </p>
