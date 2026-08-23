@@ -9,7 +9,7 @@ load_dotenv()
 # ── LLM singleton ────────────────────────────────────────────────────────────
 _llm = ChatGroq(
     api_key=os.getenv("GROQ_API_KEY"),
-    model_name="llama-3.3-70b-versatile",
+    model_name="llama-3.1-8b-instant",
     temperature=0.1
 )
 
@@ -89,3 +89,4 @@ def screen_resume(resume_text: str, job_data: dict) -> dict:
         return {"success": False, "error": f"JSON parse failed: {e}", "raw_response": raw}
     except Exception as e:
         return {"success": False, "error": str(e), "raw_response": raw}
+

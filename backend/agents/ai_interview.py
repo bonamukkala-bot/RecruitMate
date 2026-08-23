@@ -9,7 +9,7 @@ load_dotenv()
 # ── LLM singleton ────────────────────────────────────────────────────────────
 _llm = ChatGroq(
     api_key=os.getenv("GROQ_API_KEY"),
-    model_name="llama-3.3-70b-versatile",
+    model_name="llama-3.1-8b-instant",
     temperature=0.3
 )
 
@@ -186,3 +186,4 @@ def close_interview(candidate_data: dict, job_data: dict, company_name: str, tot
         return {"success": False, "error": f"JSON parse failed: {e}", "raw_response": raw}
     except Exception as e:
         return {"success": False, "error": str(e)}
+
