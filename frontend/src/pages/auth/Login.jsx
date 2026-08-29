@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Mail, Lock, Bot } from "lucide-react";
+import { Mail, Lock, Bot, ShieldCheck } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import Input from "../../components/ui/Input";
 import Button from "../../components/ui/Button";
@@ -8,6 +8,8 @@ import toast from "react-hot-toast";
 
 export default function Login() {
   const [form, setForm]       = useState({ email: "", password: "" });
+  const [totpCode, setTotpCode] = useState("");
+  const [needs2FA, setNeeds2FA] = useState(false);
   const [loading, setLoading] = useState(false);
   const { login }             = useAuth();
   const navigate              = useNavigate();
@@ -16,7 +18,14 @@ export default function Login() {
     e.preventDefault();
     setLoading(true);
     try {
-      const data = await login(form.email, form.password);
+      const data = await login(form.email, form.password, needs2FA ? totpCode : undefined);
+
+      if (data.requires_2fa) {
+        setNeeds2FA(true);
+        toast("Enter your 2FA code to continue", { icon: "🔐" });
+        return;
+      }
+
       if (data.success) {
         toast.success(`Welcome back, ${data.company_name}!`);
         navigate("/dashboard");
@@ -43,25 +52,50 @@ export default function Login() {
             <Bot size={28} className="text-white" />
           </div>
           <h1 className="text-2xl font-bold text-gray-900">RecruitMate AI</h1>
-          <p className="text-gray-500 mt-1 text-sm font-medium">Sign in to your account</p>
+          <p className="text-gray-500 mt-1 text-sm font-medium">
+            {needs2FA ? "Enter your verification code" : "Sign in to your account"}
+          </p>
         </div>
 
         <div className="bg-white rounded-2xl border border-gray-200 shadow-card-md p-8">
           <form onSubmit={handleSubmit} className="space-y-4">
-            <Input label="Work Email" name="email" type="email"
-              placeholder="you@company.com" icon={Mail}
-              value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
-            <Input label="Password" name="password" type="password"
-              placeholder="••••••••" icon={Lock}
-              value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required />
+            {!needs2FA ? (
+              <>
+                <Input label="Work Email" name="email" type="email"
+                  placeholder="you@company.com" icon={Mail}
+                  value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
+                <Input label="Password" name="password" type="password"
+                  placeholder="••••••••" icon={Lock}
+                  value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required />
+              </>
+            ) : (
+              <Input label="6-digit code" name="totpCode" type="text"
+                placeholder="000000" icon={ShieldCheck}
+                value={totpCode} onChange={(e) => setTotpCode(e.target.value)}
+                maxLength={6} autoFocus required />
+            )}
+
             <Button type="submit" loading={loading} className="w-full justify-center mt-2">
-              Sign In
+              {needs2FA ? "Verify" : "Sign In"}
             </Button>
           </form>
-          <p className="text-center text-gray-500 text-sm mt-6">
-            Don't have an account?{" "}
-            <Link to="/register" className="text-indigo-600 hover:text-indigo-700 font-semibold">Register</Link>
-          </p>
+
+          {needs2FA && (
+            <button
+              type="button"
+              onClick={() => { setNeeds2FA(false); setTotpCode(""); }}
+              className="w-full text-center text-gray-500 hover:text-gray-700 text-sm mt-4"
+            >
+              ← Back to login
+            </button>
+          )}
+
+          {!needs2FA && (
+            <p className="text-center text-gray-500 text-sm mt-6">
+              Don't have an account?{" "}
+              <Link to="/register" className="text-indigo-600 hover:text-indigo-700 font-semibold">Register</Link>
+            </p>
+          )}
         </div>
       </div>
     </div>

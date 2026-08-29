@@ -1,7 +1,7 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard, Briefcase, Users,
-  GitBranch, BarChart2, Flame, LogOut, Bot
+  GitBranch, BarChart2, Flame, Settings, LogOut, Bot
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import clsx from "clsx";
@@ -12,7 +12,8 @@ const navItems = [
   { label: "Candidates", icon: Users,            path: "/candidates" },
   { label: "Pipeline",   icon: GitBranch,        path: "/pipeline"   },
   { label: "Analytics",  icon: BarChart2,        path: "/analytics"  },
-  { label: "Heatmap",    icon: Flame,            path: "/heatmap"    }
+  { label: "Heatmap",    icon: Flame,            path: "/heatmap"    },
+  { label: "Settings",   icon: Settings,         path: "/settings"   }
 ];
 
 export default function Sidebar() {

@@ -18,9 +18,13 @@ export function AuthProvider({ children }) {
   }, []);
 
   // ── Login ────────────────────────────────────────────────────────────────
-  const login = async (email, password) => {
-    const res  = await authAPI.login({ email, password });
+  const login = async (email, password, totpCode) => {
+    const payload = { email, password };
+    if (totpCode) payload.totp_code = totpCode;
+
+    const res  = await authAPI.login(payload);
     const data = res.data;
+
     if (data.success) {
       localStorage.setItem("token",   data.token);
       localStorage.setItem("company", JSON.stringify({

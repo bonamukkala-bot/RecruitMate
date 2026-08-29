@@ -6,6 +6,12 @@ import requests
 from utils.db import companies_collection, otp_collection
 from utils.auth_helper import hash_password, verify_password, generate_token, generate_otp
 from config import Config
+import pyotp
+import qrcode
+import io
+import base64
+from bson import ObjectId
+from utils.auth_helper import jwt_required, get_current_company
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -184,9 +190,10 @@ def verify_otp():
 # ── POST /api/auth/login ──────────────────────────────────────────────────────
 @auth_bp.route("/login", methods=["POST"])
 def login():
-    body     = request.get_json()
+    body     = request.get_json() or {}
     email    = body.get("email", "").lower().strip()
     password = body.get("password", "")
+    totp_code = body.get("totp_code")
 
     if not email or not password:
         return jsonify({"success": False, "error": "Email and password are required"}), 400
@@ -202,6 +209,18 @@ def login():
     if not verify_password(password, company["password"]):
         return jsonify({"success": False, "error": "Invalid email or password"}), 401
 
+    if company.get("totp_enabled"):
+        if not totp_code:
+            return jsonify({
+                "success": False,
+                "requires_2fa": True,
+                "message": "Enter your 2FA code"
+            }), 200
+
+        totp = pyotp.TOTP(company["totp_secret"])
+        if not totp.verify(totp_code, valid_window=1):
+            return jsonify({"success": False, "error": "Invalid 2FA code"}), 401
+
     token = generate_token(company)
 
     return jsonify({
@@ -211,7 +230,6 @@ def login():
         "company_name": company["company_name"],
         "company_id"  : str(company["_id"])
     }), 200
-
 # ── GET /api/auth/me ──────────────────────────────────────────────────────────
 @auth_bp.route("/me", methods=["GET"])
 def me():
@@ -224,3 +242,112 @@ def me():
         return jsonify({"success": True, "company": payload}), 200
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 401
+@auth_bp.route('/2fa/setup', methods=['POST'])
+@jwt_required
+def setup_2fa():
+    current_company = get_current_company()
+    company = companies_collection.find_one({
+        "_id": ObjectId(current_company["company_id"])
+    })
+    if not company:
+        return jsonify({"success": False, "error": "Company not found"}), 404
+
+    # Generate a new secret (don't save it as active yet)
+    secret = pyotp.random_base32()
+
+    # Build the provisioning URI (what the QR code encodes)
+    totp = pyotp.TOTP(secret)
+    provisioning_uri = totp.provisioning_uri(
+        name=company['email'],
+        issuer_name='RecruitMate'
+    )
+
+    # Generate QR code image as base64 so the frontend can display it directly
+    qr = qrcode.make(provisioning_uri)
+    buffered = io.BytesIO()
+    qr.save(buffered, format="PNG")
+    qr_base64 = base64.b64encode(buffered.getvalue()).decode()
+
+    # Store the secret temporarily (not yet marked as enabled)
+    companies_collection.update_one(
+        {'_id': company['_id']},
+        {'$set': {'pending_totp_secret': secret}}
+    )
+
+    return {
+        'success': True,
+        'qr_code': f'data:image/png;base64,{qr_base64}',
+        'secret': secret  # shown as text too, for manual entry
+    }
+@auth_bp.route('/2fa/enable', methods=['POST'])
+@jwt_required
+def enable_2fa():
+    current_company = get_current_company()
+    company = companies_collection.find_one({
+        "_id": ObjectId(current_company["company_id"])
+    })
+    if not company:
+        return jsonify({"success": False, "error": "Company not found"}), 404
+
+    data = request.get_json() or {}
+    code = data.get('code')
+
+    if not code:
+        return {'success': False, 'error': 'Code is required'}, 400
+
+    pending_secret = company.get('pending_totp_secret')
+    if not pending_secret:
+        return {'success': False, 'error': 'No 2FA setup in progress. Call /2fa/setup first.'}, 400
+
+    totp = pyotp.TOTP(pending_secret)
+    if not totp.verify(code):
+        return {'success': False, 'error': 'Invalid code. Check your authenticator app and try again.'}, 400
+
+    # Code matched — promote pending secret to the real, active one
+    companies_collection.update_one(
+        {'_id': company['_id']},
+        {
+            '$set': {'totp_secret': pending_secret, 'totp_enabled': True},
+            '$unset': {'pending_totp_secret': ''}
+        }
+    )
+
+    return {'success': True, 'message': '2FA enabled successfully'}
+
+@auth_bp.route('/2fa/status', methods=['GET'])
+@jwt_required
+def status_2fa():
+    current_company = get_current_company()
+    company = companies_collection.find_one({
+        "_id": ObjectId(current_company["company_id"])
+    })
+    if not company:
+        return jsonify({"success": False, "error": "Company not found"}), 404
+
+    return {"success": True, "enabled": bool(company.get("totp_enabled"))}
+
+@auth_bp.route('/2fa/disable', methods=['POST'])
+@jwt_required
+def disable_2fa():
+    current_company = get_current_company()
+    company = companies_collection.find_one({
+        "_id": ObjectId(current_company["company_id"])
+    })
+    if not company:
+        return jsonify({"success": False, "error": "Company not found"}), 404
+
+    data = request.get_json() or {}
+    password = data.get("password")
+
+    if not password:
+        return jsonify({"success": False, "error": "Password is required"}), 400
+
+    if not verify_password(password, company.get("password", "")):
+        return jsonify({"success": False, "error": "Invalid password"}), 401
+
+    companies_collection.update_one(
+        {"_id": company["_id"]},
+        {"$set": {"totp_enabled": False}, "$unset": {"totp_secret": ""}}
+    )
+
+    return {"success": True, "message": "2FA disabled"}
