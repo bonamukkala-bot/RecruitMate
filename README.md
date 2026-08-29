@@ -1,17 +1,4 @@
----
-title: "RecruitMate AI"
-subtitle: "Full-stack AI recruitment platform — README"
-author: "Bonamukkala Charan Reddy"
-date: "August 2026"
-geometry: margin=1in
-fontsize: 10pt
-colorlinks: true
-linkcolor: blue
-toc: true
-toc-depth: 2
----
 
-\newpage
 
 # RecruitMate AI
 
