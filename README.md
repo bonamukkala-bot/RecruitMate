@@ -1,3 +1,6 @@
+Here's the updated README with 2FA integrated throughout — new feature bullet, updated Auth API table, updated Security section, a new Engineering decision entry, and Roadmap checked off:
+
+```markdown
 # RecruitMate AI
 
 > A multi-tenant recruitment platform that screens resumes, generates personalized interview questions, runs voice interviews through an AI interviewer, and auto-decides shortlist/reject outcomes — coordinated by seven purpose-built Groq-backed agents.
@@ -42,6 +45,7 @@ RecruitMate AI turns each step of early-stage hiring into a discrete, auditable 
 - **Kanban pipeline** — Screened → Shortlisted → Invited → Hired / Rejected.
 - **Analytics + interview heatmap** — hiring funnel, score distributions, skills in demand, and a per-question breakdown of where candidates score weakest across interviews.
 - **Bot-gated registration** — Cloudflare Turnstile is verified server-side before any account is created (see [Engineering decisions](#engineering-decisions)).
+- **Opt-in TOTP two-factor authentication** — recruiters can enable app-based (Google Authenticator/Authy-style) 2FA from Settings; once enabled, login requires a time-based code in addition to the password, and disabling it requires re-entering the current password (see [Engineering decisions](#engineering-decisions)).
 
 ---
 
@@ -128,6 +132,7 @@ The frontend never calls Groq, MongoDB, or Brevo directly — every external int
 | Client-side vision | TensorFlow.js, face-api.js, coco-ssd | In-browser interview integrity checks |
 | Backend framework | Flask 3 | REST API, blueprint-based routing |
 | Auth | PyJWT + bcrypt | Custom JWT issuance/verification — no third-party auth framework |
+| 2FA | `pyotp` + `qrcode[pil]` | TOTP secret generation/verification, QR code provisioning |
 | Database | MongoDB Atlas (PyMongo) | Companies, jobs, candidates, pipeline logs, OTPs |
 | AI orchestration | LangChain (`langchain-groq`) | Structured prompt templates + JSON-mode parsing per agent |
 | LLM | Groq — `llama-3.3-70b-versatile` | All 7 agents |
@@ -150,6 +155,14 @@ The frontend never calls Groq, MongoDB, or Brevo directly — every external int
 **Choice:** A hand-rolled `@jwt_required` decorator and `get_current_company()` helper in `utils/auth_helper.py`, built directly on `PyJWT` and `bcrypt`.
 **Reason:** The auth surface is small (register, OTP, login, one decorator) and didn't justify a framework dependency with its own configuration surface.
 **Trade-off:** Token refresh, blacklisting, and other conveniences that `flask-jwt-extended` provides out of the box would need to be built manually if the auth requirements grow.
+
+### TOTP-based 2FA, opt-in, layered on top of signup OTP
+
+**Context:** Signup already required a one-time email OTP to activate an account — but that only verifies email ownership once, at registration. It provides no protection against a stolen password being used to log in later, which matters given recruiter accounts hold candidate PII across a multi-tenant setup.
+**Options:** Reuse the existing Brevo email-OTP flow at every login, or add a separate app-based TOTP (Google Authenticator/Authy-style) layer.
+**Choice:** TOTP via `pyotp`, opt-in per recruiter from a Settings page. Enabling requires scanning a QR code and confirming a live code (`/2fa/setup` → `/2fa/enable`); login checks `totp_enabled` and asks for a code after password verification succeeds (`requires_2fa` response); disabling requires re-entering the current password (`/2fa/disable`).
+**Reason:** TOTP doesn't depend on email deliverability, works offline, and is the industry-standard second factor — meaningfully stronger than reusing email OTP, for comparable implementation cost.
+**Trade-off:** Adds one more secret per company document (`totp_secret`) and a `pending_totp_secret` field during the setup handshake; the QR/secret flow requires clear UX so recruiters don't get locked out mid-setup.
 
 ### Token-based access for the public interview routes
 
@@ -190,13 +203,13 @@ RecruitMate/
 │   │   ├── candidate_comparator.py # AI comparison of shortlisted candidates
 │   │   └── email_sender.py         # All transactional email generation + sending
 │   ├── routes/
-│   │   ├── auth.py                 # register (Turnstile-gated) / verify-otp / login / me
+│   │   ├── auth.py                 # register (Turnstile-gated) / verify-otp / login / me / 2fa (setup, enable, disable, status)
 │   │   ├── jobs.py                 # CRUD, AI JD generation, analytics
 │   │   ├── candidates.py           # screening, search, export, comparison
 │   │   └── pipeline.py             # emails, interviews, scheduling, heatmap
 │   ├── utils/
 │   │   ├── db.py                   # MongoDB client, indexes
-│   │   ├── auth_helper.py          # JWT decorator, current-company resolver
+│   │   ├── auth_helper.py          # JWT decorator, current-company resolver, password hashing
 │   │   └── file_extractor.py       # PDF/DOCX text extraction
 │   ├── config.py                   # Env-var-backed settings
 │   ├── app.py                      # App factory, blueprint registration, CORS
@@ -208,7 +221,8 @@ RecruitMate/
         ├── context/AuthContext.jsx
         ├── components/{ui,layout}/  # Shared UI + layout shell
         └── pages/
-            ├── auth/                 # Login, Register (Turnstile), VerifyOTP
+            ├── auth/                 # Login (with 2FA code step), Register (Turnstile), VerifyOTP
+            ├── settings/              # Security Settings — enable/disable 2FA
             ├── jobs/, candidates/, pipeline/
             ├── analytics/            # Analytics.jsx, Heatmap.jsx
             └── interview/            # Public voice InterviewPortal
@@ -286,8 +300,12 @@ Base path: `/api`. Routes marked 🔒 require `Authorization: Bearer <JWT>`. Rou
 |---|---|---|
 | POST | `/auth/register` | Create company account — Turnstile-verified |
 | POST | `/auth/verify-otp` | Verify signup OTP |
-| POST | `/auth/login` | Log in, receive JWT |
+| POST | `/auth/login` | Log in; returns `requires_2fa: true` instead of a token if 2FA is enabled and no code was sent |
 | GET | `/auth/me` | 🔒 Current authenticated company |
+| POST | `/auth/2fa/setup` | 🔒 Generate a new TOTP secret + QR code for setup |
+| POST | `/auth/2fa/enable` | 🔒 Confirm a code against the pending secret and activate 2FA |
+| GET | `/auth/2fa/status` | 🔒 Whether 2FA is currently enabled for the company |
+| POST | `/auth/2fa/disable` | 🔒 Disable 2FA — requires current password |
 
 **Jobs** 🔒 (all routes)
 
@@ -349,6 +367,7 @@ Base path: `/api`. Routes marked 🔒 require `Authorization: Bearer <JWT>`. Rou
 
 - **Authentication:** custom JWT (PyJWT), 8-hour expiry, verified on every protected route via a `@jwt_required` decorator; passwords hashed with bcrypt.
 - **Signup verification:** email OTP required before an account is usable.
+- **Two-factor authentication:** opt-in TOTP (`pyotp`), managed from a Security Settings page. Login checks `totp_enabled` after password verification and requires a valid time-based code before issuing a JWT (`valid_window=1` tolerates ~30s of clock drift). Disabling 2FA requires re-entering the current password, so a stolen session token alone can't turn protection off.
 - **Bot protection:** Cloudflare Turnstile verified server-side on `/register`, ahead of any DB write (see [Engineering decisions](#engineering-decisions)). Not applied to any other route.
 - **Public routes:** the interview-taking routes are deliberately unauthenticated and secured by an unguessable per-candidate token instead of a session.
 - **Known gaps:** no rate limiting yet on the public interview routes; MongoDB TLS validation is currently relaxed (`tlsAllowInvalidCertificates=True`) — both are tracked in [Limitations](#limitations).
@@ -376,6 +395,7 @@ python backend/test_agents.py    # exercises each agent directly with fixed samp
 - Single LLM provider (Groq) with no fallback — an outage or rate-limit on Groq's side stalls every agent, including resume screening and interview flows.
 - No React error boundaries yet — an unhandled render error can blank the SPA rather than degrade gracefully.
 - Offer letter generation is not yet built (see [Roadmap](#roadmap)).
+- No 2FA recovery codes yet — if a recruiter loses access to their authenticator app, there's currently no backup-code or admin-reset flow (tracked in [Roadmap](#roadmap)).
 
 ---
 
@@ -387,8 +407,10 @@ python backend/test_agents.py    # exercises each agent directly with fixed samp
 - [ ] Remove dead code paths in `ai_interview.py`
 - [ ] Automated test suite (pytest for backend agents/routes) and CI
 - [ ] Tighten MongoDB TLS configuration
+- [ ] 2FA recovery/backup codes for lost-device scenarios
 - [x] Interview performance heatmap (weakest questions, radar chart, skill-gap breakdown)
 - [x] Cloudflare Turnstile bot protection on Registration
+- [x] Opt-in TOTP two-factor authentication (setup, enable, disable, login enforcement)
 
 ---
 
@@ -435,3 +457,4 @@ First-year B.Sc Computer Science, NIAT Hyderabad (BITS Pilani-affiliated)
 - GitHub — [@bonamukkala-bot](https://github.com/bonamukkala-bot)
 - Portfolio — [charan-me.vercel.app](https://charan-me.vercel.app)
 - LinkedIn — [bonamukkala-charan](https://linkedin.com/in/bonamukkala-charan)
+```
