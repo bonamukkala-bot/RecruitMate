@@ -40,7 +40,7 @@ def create_indexes():
             [("expires_at", ASCENDING)],
             expireAfterSeconds=0
         )
-        print("✅ Indexes ready")
+        print(f"✅ Indexes ready on database: {db.name}")
     except Exception as e:
         print(f"⚠️ Index warning: {e}")
 

@@ -1,15 +1,20 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+# Explicitly load backend/.env regardless of current working directory
+env_path = Path(__file__).resolve().parent / ".env"
+load_dotenv(dotenv_path=env_path)
 
 class Config:
     # Groq
     GROQ_API_KEY       = os.getenv("GROQ_API_KEY")
+    GROQ_MODEL         = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
+    GROQ_MODEL_HEAVY   = os.getenv("GROQ_MODEL_HEAVY", "openai/gpt-oss-120b")
 
     # MongoDB
     MONGO_URI          = os.getenv("MONGO_URI")
-    DB_NAME            = "recruitmate"
+    DB_NAME            = os.getenv("MONGO_DB") or "recruitmate_dev"
 
     # JWT
     JWT_SECRET         = os.getenv("JWT_SECRET")

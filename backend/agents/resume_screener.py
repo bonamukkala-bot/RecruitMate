@@ -1,16 +1,21 @@
 import os
+import sys
 import json
 import re
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config import Config
+
 load_dotenv()
 
 # ── LLM singleton ────────────────────────────────────────────────────────────
 _llm = ChatGroq(
-    api_key=os.getenv("GROQ_API_KEY"),
-    model_name="llama-3.1-8b-instant",
-    temperature=0.1
+    api_key=Config.GROQ_API_KEY,
+    model_name=Config.GROQ_MODEL_HEAVY,
+    temperature=0.1,
+    max_tokens=2048
 )
 
 # ── Prompts ──────────────────────────────────────────────────────────────────
@@ -47,10 +52,18 @@ recommendation must be exactly "Shortlist" or "Reject" — no other value."""
 _REQUIRED = {"match_score", "matched_skills", "missing_skills", "recommendation", "reasoning"}
 
 # ── Utility ──────────────────────────────────────────────────────────────────
-_FENCE = re.compile(r"```(?:json)?\s*|\s*```")
-
 def _clean(text: str) -> str:
-    return _FENCE.sub("", text).strip()
+    if not text:
+        return ""
+    cleaned = re.sub(r"<(think|thought)>[\s\S]*?</\1>", "", text, flags=re.IGNORECASE).strip()
+    fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned)
+    if fence_match:
+        return fence_match.group(1).strip()
+    first_brace = cleaned.find("{")
+    last_brace = cleaned.rfind("}")
+    if first_brace != -1 and last_brace > first_brace:
+        return cleaned[first_brace:last_brace + 1].strip()
+    return cleaned.strip()
 
 # ── Main public function ─────────────────────────────────────────────────────
 def screen_resume(resume_text: str, job_data: dict) -> dict:
@@ -61,7 +74,7 @@ def screen_resume(resume_text: str, job_data: dict) -> dict:
     """
     raw = ""
     try:
-        raw = _llm.invoke(
+        resp = _llm.invoke(
             [
                 {"role": "system", "content": _SYSTEM},
                 {"role": "user",   "content": _TEMPLATE.format(
@@ -71,9 +84,13 @@ def screen_resume(resume_text: str, job_data: dict) -> dict:
                     resume_text=resume_text
                 )}
             ]
-        ).content
+        )
+        raw = resp.content or ""
+        cleaned = _clean(raw)
+        if not cleaned:
+            raise ValueError("Empty response received from LLM.")
 
-        parsed = json.loads(_clean(raw))
+        parsed = json.loads(cleaned)
 
         # Validate critical fields
         missing = _REQUIRED - parsed.keys()
@@ -86,7 +103,9 @@ def screen_resume(resume_text: str, job_data: dict) -> dict:
         return {"success": True, "data": parsed}
 
     except json.JSONDecodeError as e:
+        print(f"❌ [resume_screener] JSON parse failed: {e}\nRaw output: {raw}")
         return {"success": False, "error": f"JSON parse failed: {e}", "raw_response": raw}
     except Exception as e:
+        print(f"❌ [resume_screener] Error: {e}")
         return {"success": False, "error": str(e), "raw_response": raw}
 

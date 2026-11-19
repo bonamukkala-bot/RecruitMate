@@ -1,16 +1,21 @@
 import os
+import sys
 import json
 import re
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config import Config
+
 load_dotenv()
 
 # ── LLM singleton ────────────────────────────────────────────────────────────
 _llm = ChatGroq(
-    api_key=os.getenv("GROQ_API_KEY"),
-    model_name="llama-3.1-8b-instant",
-    temperature=0.2
+    api_key=Config.GROQ_API_KEY,
+    model_name=Config.GROQ_MODEL_HEAVY,
+    temperature=0.2,
+    max_tokens=2048
 )
 
 _SYSTEM = "You are a senior technical interviewer and evaluator. Return ONLY valid JSON. No markdown, no explanation."
@@ -97,10 +102,18 @@ _REQUIRED = {
     "code"  : {"overall_score", "correctness", "time_complexity", "hiring_recommendation", "summary"}
 }
 
-_FENCE = re.compile(r"```(?:json)?\s*|\s*```")
-
 def _clean(text: str) -> str:
-    return _FENCE.sub("", text).strip()
+    if not text:
+        return ""
+    cleaned = re.sub(r"<(think|thought)>[\s\S]*?</\1>", "", text, flags=re.IGNORECASE).strip()
+    fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned)
+    if fence_match:
+        return fence_match.group(1).strip()
+    first_brace = cleaned.find("{")
+    last_brace = cleaned.rfind("}")
+    if first_brace != -1 and last_brace > first_brace:
+        return cleaned[first_brace:last_brace + 1].strip()
+    return cleaned.strip()
 
 # ── Main public function ─────────────────────────────────────────────────────
 def evaluate_answers(
@@ -137,14 +150,18 @@ def evaluate_answers(
                 code=answers.get("code", "")
             )
 
-        raw = _llm.invoke(
+        resp = _llm.invoke(
             [
                 {"role": "system", "content": _SYSTEM},
                 {"role": "user",   "content": content}
             ]
-        ).content
+        )
+        raw = resp.content or ""
+        cleaned = _clean(raw)
+        if not cleaned:
+            raise ValueError("Empty response received from LLM.")
 
-        parsed = json.loads(_clean(raw))
+        parsed = json.loads(cleaned)
 
         # Validate required fields
         missing = _REQUIRED[answer_type] - parsed.keys()
@@ -162,6 +179,8 @@ def evaluate_answers(
         return {"success": True, "data": parsed}
 
     except json.JSONDecodeError as e:
+        print(f"❌ [answer_evaluator] JSON parse failed: {e}\nRaw output: {raw}")
         return {"success": False, "error": f"JSON parse failed: {e}", "raw_response": raw}
     except Exception as e:
+        print(f"❌ [answer_evaluator] Error: {e}")
         return {"success": False, "error": str(e), "raw_response": raw}

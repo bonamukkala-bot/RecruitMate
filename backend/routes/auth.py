@@ -18,10 +18,12 @@ auth_bp = Blueprint("auth", __name__)
 # ── Verify Cloudflare Turnstile token ──────────────────────────────────────────
 def verify_turnstile(token: str, remote_ip: str = None) -> bool:
     if not token:
+        print("[DEBUG verify_turnstile] Token is empty or missing")
         return False
     try:
+        secret = os.getenv("TURNSTILE_SECRET_KEY") or Config.TURNSTILE_SECRET_KEY
         payload = {
-            "secret": Config.TURNSTILE_SECRET_KEY,
+            "secret": secret,
             "response": token
         }
         if remote_ip:
@@ -33,9 +35,12 @@ def verify_turnstile(token: str, remote_ip: str = None) -> bool:
             timeout=5
         )
         result = resp.json()
+        masked_secret = f"{secret[:4]}...{secret[-4:]}" if secret and len(secret) > 8 else "None"
+        print(f"[DEBUG verify_turnstile] Secret in use: {masked_secret}")
+        print(f"[DEBUG verify_turnstile] Cloudflare siteverify result: {result}")
         return result.get("success", False)
     except Exception as e:
-        print(f"Turnstile verification error: {e}")
+        print(f"[DEBUG verify_turnstile] Verification exception: {e}")
         return False
 
 # ── Send OTP email via Brevo ──────────────────────────────────────────────────
@@ -88,15 +93,22 @@ def send_otp_email(to_email: str, otp: str, company_name: str) -> bool:
 # ── POST /api/auth/register ───────────────────────────────────────────────────
 @auth_bp.route("/register", methods=["POST"])
 def register():
-    body = request.get_json()
+    body = request.get_json() or {}
+
+    print(f"\n[DEBUG /api/auth/register] Received request keys: {list(body.keys())}")
+    required = {"email", "password", "company_name", "full_name"}
+    print(f"[DEBUG /api/auth/register] Expected required keys: {list(required)}")
 
     turnstile_token = body.get("turnstile_token")
+    print(f"[DEBUG /api/auth/register] Has turnstile_token: {bool(turnstile_token)}")
+
     if not verify_turnstile(turnstile_token, request.remote_addr):
+        print("[DEBUG /api/auth/register] 400 branch fired: CAPTCHA verification failed. Please try again.")
         return jsonify({"success": False, "error": "CAPTCHA verification failed. Please try again."}), 400
 
-    required = {"email", "password", "company_name", "full_name"}
     missing  = required - body.keys()
     if missing:
+        print(f"[DEBUG /api/auth/register] 400 branch fired: Missing fields: {missing}")
         return jsonify({"success": False, "error": f"Missing fields: {missing}"}), 400
 
     email        = body["email"].lower().strip()
@@ -195,22 +207,32 @@ def login():
     password = body.get("password", "")
     totp_code = body.get("totp_code")
 
+    print(f"\n[DEBUG /api/auth/login] Received login request for: '{email}'")
+    print(f"[DEBUG /api/auth/login] Database name in use: '{companies_collection.database.name}'")
+
     if not email or not password:
+        print("[DEBUG /api/auth/login] 400: Missing email or password in request body")
         return jsonify({"success": False, "error": "Email and password are required"}), 400
 
     company = companies_collection.find_one({"email": email})
 
     if not company:
+        print(f"[DEBUG /api/auth/login] 401: User NOT found in '{companies_collection.name}' collection for email: '{email}'")
         return jsonify({"success": False, "error": "Invalid email or password"}), 401
 
+    print(f"[DEBUG /api/auth/login] User found: company_id={company.get('_id')}, is_verified={company.get('is_verified')}")
+
     if not company.get("is_verified"):
+        print(f"[DEBUG /api/auth/login] 403: User is not verified")
         return jsonify({"success": False, "error": "Please verify your email first"}), 403
 
     if not verify_password(password, company["password"]):
+        print(f"[DEBUG /api/auth/login] 401: Password verification failed (bcrypt mismatch) for email: '{email}'")
         return jsonify({"success": False, "error": "Invalid email or password"}), 401
 
     if company.get("totp_enabled"):
         if not totp_code:
+            print("[DEBUG /api/auth/login] 200: 2FA required for this account")
             return jsonify({
                 "success": False,
                 "requires_2fa": True,
@@ -219,8 +241,10 @@ def login():
 
         totp = pyotp.TOTP(company["totp_secret"])
         if not totp.verify(totp_code, valid_window=1):
+            print("[DEBUG /api/auth/login] 401: 2FA TOTP verification failed")
             return jsonify({"success": False, "error": "Invalid 2FA code"}), 401
 
+    print(f"[DEBUG /api/auth/login] 200: Login successful for email: '{email}'")
     token = generate_token(company)
 
     return jsonify({

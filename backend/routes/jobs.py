@@ -153,12 +153,14 @@ def generate_jd():
         return jsonify({"success": False, "error": "Brief description is required"}), 400
 
     from langchain_groq import ChatGroq
-    import os
+    from config import Config
+    import re
 
     llm = ChatGroq(
-        api_key=os.getenv("GROQ_API_KEY"),
-        model_name="llama-3.1-8b-instant",
-        temperature=0.7
+        api_key=Config.GROQ_API_KEY,
+        model_name=Config.GROQ_MODEL,
+        temperature=0.7,
+        max_tokens=2048
     )
 
     prompt = f"""You are an expert HR professional. Generate a complete, professional job description based on this brief:
@@ -185,11 +187,13 @@ Return ONLY the job description text, no extra commentary."""
             {"role": "system", "content": "You are an expert HR professional who writes compelling job descriptions."},
             {"role": "user",   "content": prompt}
         ])
+        jd_content = re.sub(r"<(think|thought)>[\s\S]*?</\1>", "", response.content or "", flags=re.IGNORECASE).strip()
         return jsonify({
             "success": True,
-            "jd_text": response.content
+            "jd_text": jd_content
         }), 200
     except Exception as e:
+        print(f"❌ [jobs:generate-jd] Error: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 # ── GET /api/jobs/analytics — Dashboard analytics ─────────────────────────────
 @jobs_bp.route("/analytics", methods=["GET"])

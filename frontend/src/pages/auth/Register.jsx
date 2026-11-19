@@ -10,6 +10,7 @@ import toast from "react-hot-toast";
 export default function Register() {
   const [form, setForm] = useState({ email: "", password: "", company_name: "", full_name: "" });
   const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
   const [turnstileToken, setTurnstileToken] = useState("");
   const [turnstileKey, setTurnstileKey] = useState(0);
   const { register } = useAuth();
@@ -17,6 +18,7 @@ export default function Register() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setErrorMessage("");
 
     if (!turnstileToken) {
       toast.error("Please complete the verification challenge");
@@ -30,12 +32,16 @@ export default function Register() {
         toast.success("Registration successful! Check your email for OTP.");
         navigate("/verify-otp", { state: { email: form.email } });
       } else {
-        toast.error(data.error || "Registration failed");
+        const msg = data.error || "Registration failed";
+        setErrorMessage(msg);
+        toast.error(msg);
         setTurnstileToken("");
         setTurnstileKey((k) => k + 1); // force widget to re-render/reset
       }
     } catch (err) {
-      toast.error(err.response?.data?.error || "Registration failed");
+      const msg = err.response?.data?.error || err.response?.data?.message || err.message || "Registration failed";
+      setErrorMessage(msg);
+      toast.error(msg);
       setTurnstileToken("");
       setTurnstileKey((k) => k + 1);
     } finally {
@@ -58,6 +64,11 @@ export default function Register() {
           <p className="text-gray-500 mt-1 text-sm font-medium">Create your company account</p>
         </div>
         <div className="bg-white rounded-2xl border border-gray-200 shadow-card-md p-8">
+          {errorMessage && (
+            <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl">
+              {errorMessage}
+            </div>
+          )}
           <form onSubmit={handleSubmit} className="space-y-4">
             <Input label="Full Name" name="full_name" placeholder="John Doe" icon={User}
               value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} required />

@@ -11,12 +11,14 @@ export default function Login() {
   const [totpCode, setTotpCode] = useState("");
   const [needs2FA, setNeeds2FA] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
   const { login }             = useAuth();
   const navigate              = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
+    setErrorMessage("");
     try {
       const data = await login(form.email, form.password, needs2FA ? totpCode : undefined);
 
@@ -30,10 +32,14 @@ export default function Login() {
         toast.success(`Welcome back, ${data.company_name}!`);
         navigate("/dashboard");
       } else {
-        toast.error(data.error || "Login failed");
+        const msg = data.error || "Login failed";
+        setErrorMessage(msg);
+        toast.error(msg);
       }
     } catch (err) {
-      toast.error(err.response?.data?.error || "Login failed");
+      const msg = err.response?.data?.error || err.response?.data?.message || err.message || "Login failed";
+      setErrorMessage(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
@@ -58,6 +64,11 @@ export default function Login() {
         </div>
 
         <div className="bg-white rounded-2xl border border-gray-200 shadow-card-md p-8">
+          {errorMessage && (
+            <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl">
+              {errorMessage}
+            </div>
+          )}
           <form onSubmit={handleSubmit} className="space-y-4">
             {!needs2FA ? (
               <>

@@ -1,16 +1,21 @@
 import os
+import sys
 import json
 import re
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config import Config
+
 load_dotenv()
 
 # ── LLM singleton (loaded once, reused for every call) ──────────────────────
 _llm = ChatGroq(
-    api_key=os.getenv("GROQ_API_KEY"),
-    model_name="llama-3.1-8b-instant",
-    temperature=0.1
+    api_key=Config.GROQ_API_KEY,
+    model_name=Config.GROQ_MODEL,
+    temperature=0.1,
+    max_tokens=2048
 )
 
 # ── Exact schema shown inline so the model never guesses the shape ───────────
@@ -41,10 +46,18 @@ JOB DESCRIPTION:
 _REQUIRED = {"job_title", "required_skills", "experience_required", "responsibilities"}
 
 # ── Utility: strip ```json fences LLMs sometimes add ────────────────────────
-_FENCE = re.compile(r"```(?:json)?\s*|\s*```")
-
 def _clean(text: str) -> str:
-    return _FENCE.sub("", text).strip()
+    if not text:
+        return ""
+    cleaned = re.sub(r"<(think|thought)>[\s\S]*?</\1>", "", text, flags=re.IGNORECASE).strip()
+    fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned)
+    if fence_match:
+        return fence_match.group(1).strip()
+    first_brace = cleaned.find("{")
+    last_brace = cleaned.rfind("}")
+    if first_brace != -1 and last_brace > first_brace:
+        return cleaned[first_brace:last_brace + 1].strip()
+    return cleaned.strip()
 
 # ── Utility: catch any placeholder-style value the LLM slips through with ───
 # Matches things like [City], [Location], {City}, <City>, TBD, N/A, etc.
@@ -70,14 +83,18 @@ def parse_jd(jd_text: str) -> dict:
     raw = ""
     try:
         # Single LLM call — no chain overhead, minimal latency
-        raw = _llm.invoke(
+        resp = _llm.invoke(
             [
                 {"role": "system", "content": _SYSTEM},
                 {"role": "user",   "content": _TEMPLATE.format(jd_text=jd_text)}
             ]
-        ).content
+        )
+        raw = resp.content or ""
+        cleaned = _clean(raw)
+        if not cleaned:
+            raise ValueError("Empty response received from LLM.")
 
-        parsed = json.loads(_clean(raw))
+        parsed = json.loads(cleaned)
 
         # Validate critical fields exist
         missing = _REQUIRED - parsed.keys()
@@ -91,6 +108,8 @@ def parse_jd(jd_text: str) -> dict:
         return {"success": True, "data": parsed}
 
     except json.JSONDecodeError as e:
+        print(f"❌ [jd_parser] JSON parse failed: {e}\nRaw output: {raw}")
         return {"success": False, "error": f"JSON parse failed: {e}", "raw_response": raw}
     except Exception as e:
+        print(f"❌ [jd_parser] Error: {e}")
         return {"success": False, "error": str(e), "raw_response": raw}

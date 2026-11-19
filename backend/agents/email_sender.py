@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import re
 import sib_api_v3_sdk
@@ -6,13 +7,17 @@ from sib_api_v3_sdk.rest import ApiException
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config import Config
+
 load_dotenv()
 
 # ── Singletons ───────────────────────────────────────────────────────────────
 _llm = ChatGroq(
-    api_key=os.getenv("GROQ_API_KEY"),
-    model_name="llama-3.1-8b-instant",
-    temperature=0.7
+    api_key=Config.GROQ_API_KEY,
+    model_name=Config.GROQ_MODEL,
+    temperature=0.7,
+    max_tokens=2048
 )
 
 # ── Brevo client setup ────────────────────────────────────────────────────────
@@ -115,10 +120,18 @@ Return ONLY this JSON shape — no markdown fences:
 _REJECTION_REQUIRED = {"subject", "greeting", "body", "sign_off"}
 
 # ── Utility ──────────────────────────────────────────────────────────────────
-_FENCE = re.compile(r"```(?:json)?\s*|\s*```")
-
 def _clean(text: str) -> str:
-    return _FENCE.sub("", text).strip()
+    if not text:
+        return ""
+    cleaned = re.sub(r"<(think|thought)>[\s\S]*?</\1>", "", text, flags=re.IGNORECASE).strip()
+    fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned)
+    if fence_match:
+        return fence_match.group(1).strip()
+    first_brace = cleaned.find("{")
+    last_brace = cleaned.rfind("}")
+    if first_brace != -1 and last_brace > first_brace:
+        return cleaned[first_brace:last_brace + 1].strip()
+    return cleaned.strip()
 
 def _build_html(parts: dict, company_name: str) -> str:
     return f"""
@@ -216,8 +229,10 @@ def generate_email_content(candidate_data: dict, job_data: dict, screen_data: di
         return {"success": True, "data": parsed}
 
     except json.JSONDecodeError as e:
+        print(f"❌ [email_sender] JSON parse failed: {e}\nRaw output: {raw}")
         return {"success": False, "error": f"JSON parse failed: {e}", "raw_response": raw}
     except Exception as e:
+        print(f"❌ [email_sender] Error: {e}")
         return {"success": False, "error": str(e)}
 
 # ── Step 2: Send shortlist email via Brevo ────────────────────────────────────
@@ -278,8 +293,10 @@ def generate_interview_email_content(candidate_data: dict, job_data: dict, compa
         return {"success": True, "data": parsed}
 
     except json.JSONDecodeError as e:
+        print(f"❌ [email_sender] JSON parse failed: {e}\nRaw output: {raw}")
         return {"success": False, "error": f"JSON parse failed: {e}", "raw_response": raw}
     except Exception as e:
+        print(f"❌ [email_sender] Error: {e}")
         return {"success": False, "error": str(e)}
 
 # ── Step 4: Send interview invitation email via Brevo ─────────────────────────
@@ -377,8 +394,10 @@ def generate_offline_email_content(candidate_data: dict, job_data: dict, company
         return {"success": True, "data": parsed}
 
     except json.JSONDecodeError as e:
+        print(f"❌ [email_sender] JSON parse failed: {e}\nRaw output: {raw}")
         return {"success": False, "error": f"JSON parse failed: {e}", "raw_response": raw}
     except Exception as e:
+        print(f"❌ [email_sender] Error: {e}")
         return {"success": False, "error": str(e)}
 
 # ── Step 6: Send offline interview confirmation email via Brevo ──────────────
@@ -439,8 +458,10 @@ def generate_rejection_email_content(candidate_data: dict, job_data: dict, compa
         return {"success": True, "data": parsed}
 
     except json.JSONDecodeError as e:
+        print(f"❌ [email_sender] JSON parse failed: {e}\nRaw output: {raw}")
         return {"success": False, "error": f"JSON parse failed: {e}", "raw_response": raw}
     except Exception as e:
+        print(f"❌ [email_sender] Error: {e}")
         return {"success": False, "error": str(e)}
 
 # ── Step 8: Send rejection email via Brevo ─────────────────────────────────────

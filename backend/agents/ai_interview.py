@@ -1,16 +1,21 @@
 import os
+import sys
 import json
 import re
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config import Config
+
 load_dotenv()
 
 # ── LLM singleton ────────────────────────────────────────────────────────────
 _llm = ChatGroq(
-    api_key=os.getenv("GROQ_API_KEY"),
-    model_name="llama-3.1-8b-instant",
-    temperature=0.3
+    api_key=Config.GROQ_API_KEY,
+    model_name=Config.GROQ_MODEL,
+    temperature=0.3,
+    max_tokens=2048
 )
 
 _SYSTEM = "You are an AI interviewer conducting a professional job interview. Return ONLY valid JSON. No markdown, no explanation."
@@ -64,18 +69,40 @@ Return ONLY this JSON shape — no markdown fences:
 }}"""
 
 # ── Utility ──────────────────────────────────────────────────────────────────
-_FENCE = re.compile(r"```(?:json)?\s*|\s*```")
-
 def _clean(text: str) -> str:
-    return _FENCE.sub("", text).strip()
+    if not text:
+        return ""
+    # Strip <think> or <thought> reasoning blocks from reasoning models
+    cleaned = re.sub(r"<(think|thought)>[\s\S]*?</\1>", "", text, flags=re.IGNORECASE).strip()
+
+    # Extract JSON inside markdown code fence if present
+    fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned)
+    if fence_match:
+        return fence_match.group(1).strip()
+
+    # Otherwise find outer JSON bounds ({...} or [...])
+    first_brace = cleaned.find("{")
+    last_brace = cleaned.rfind("}")
+    first_bracket = cleaned.find("[")
+    last_bracket = cleaned.rfind("]")
+
+    if first_brace != -1 and (first_bracket == -1 or first_brace < first_bracket):
+        if last_brace != -1 and last_brace > first_brace:
+            return cleaned[first_brace:last_brace + 1].strip()
+    elif first_bracket != -1:
+        if last_bracket != -1 and last_bracket > first_bracket:
+            return cleaned[first_bracket:last_bracket + 1].strip()
+
+    return cleaned.strip()
 
 def _invoke(content: str) -> str:
-    return _llm.invoke(
+    res = _llm.invoke(
         [
             {"role": "system", "content": _SYSTEM},
             {"role": "user",   "content": content}
         ]
-    ).content
+    )
+    return res.content or ""
 
 # ── Public functions ─────────────────────────────────────────────────────────
 def start_interview(candidate_data: dict, job_data: dict, company_name: str, questions: dict) -> dict:
@@ -117,8 +144,10 @@ def start_interview(candidate_data: dict, job_data: dict, company_name: str, que
         }
 
     except json.JSONDecodeError as e:
+        print(f"❌ [ai_interview:start_interview] JSON parse failed: {e}\nRaw output: {raw}")
         return {"success": False, "error": f"JSON parse failed: {e}", "raw_response": raw}
     except Exception as e:
+        print(f"❌ [ai_interview:start_interview] Error: {e}")
         return {"success": False, "error": str(e)}
 
 
@@ -152,8 +181,10 @@ def next_question(current_question: str, candidate_answer: str, next_q: dict | N
         }
 
     except json.JSONDecodeError as e:
+        print(f"❌ [ai_interview:start_interview] JSON parse failed: {e}\nRaw output: {raw}")
         return {"success": False, "error": f"JSON parse failed: {e}", "raw_response": raw}
     except Exception as e:
+        print(f"❌ [ai_interview:start_interview] Error: {e}")
         return {"success": False, "error": str(e)}
 
 
@@ -183,7 +214,9 @@ def close_interview(candidate_data: dict, job_data: dict, company_name: str, tot
         }
 
     except json.JSONDecodeError as e:
+        print(f"❌ [ai_interview:start_interview] JSON parse failed: {e}\nRaw output: {raw}")
         return {"success": False, "error": f"JSON parse failed: {e}", "raw_response": raw}
     except Exception as e:
+        print(f"❌ [ai_interview:start_interview] Error: {e}")
         return {"success": False, "error": str(e)}
 

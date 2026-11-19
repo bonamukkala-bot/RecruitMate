@@ -32,6 +32,8 @@ def create_app():
     app.register_blueprint(pipeline_bp,   url_prefix="/api/pipeline")
     # ── Create DB indexes on startup ─────────────────────────────────────────
     from utils.db import create_indexes
+    from config import Config
+    print(f"📡 Using MongoDB database: {Config.DB_NAME}")
     create_indexes()
 
     # ── Health Check ─────────────────────────────────────────────────────────
