@@ -1,24 +1,65 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useNavigate, useLocation, Link } from "react-router-dom";
 import { Bot, Mail } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
+import { authAPI } from "../../api/auth";
 import Button from "../../components/ui/Button";
 import toast from "react-hot-toast";
 
 export default function VerifyOTP() {
-  const [otp, setOtp]         = useState(["", "", "", "", "", ""]);
-  const [loading, setLoading] = useState(false);
-  const { verifyOTP }         = useAuth();
-  const navigate              = useNavigate();
-  const location              = useLocation();
-  const inputRefs             = useRef([]);
+  const [otp, setOtp]             = useState(["", "", "", "", "", ""]);
+  const [loading, setLoading]     = useState(false);
+  const [resending, setResending] = useState(false);
+  const [cooldown, setCooldown]   = useState(60);
+  const { verifyOTP }             = useAuth();
+  const navigate                  = useNavigate();
+  const location                  = useLocation();
+  const inputRefs                 = useRef([]);
 
   const email = location.state?.email || "";
 
+  // ── 60-second cooldown timer on mount / resend ─────────────────────────────
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const interval = setInterval(() => {
+      setCooldown((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [cooldown]);
+
+  const handleResend = async () => {
+    if (!email) {
+      toast.error("No email specified to resend OTP");
+      return;
+    }
+    if (cooldown > 0) return;
+
+    setResending(true);
+    try {
+      const res = await authAPI.resendOTP({ email });
+      if (res.data.success) {
+        toast.success(res.data.message || "A new code has been sent to your email.");
+        setCooldown(60);
+        setOtp(["", "", "", "", "", ""]);
+        inputRefs.current[0]?.focus();
+      } else {
+        toast.error(res.data.error || "Failed to resend code");
+      }
+    } catch (err) {
+      const data = err.response?.data;
+      if (err.response?.status === 429 && data?.cooldown_remaining) {
+        setCooldown(data.cooldown_remaining);
+      }
+      toast.error(data?.error || "Failed to resend code");
+    } finally {
+      setResending(false);
+    }
+  };
+
   const handleChange = (index, value) => {
     if (!/^\d*$/.test(value)) return;
-    const newOtp    = [...otp];
-    newOtp[index]   = value.slice(-1);
+    const newOtp  = [...otp];
+    newOtp[index] = value.slice(-1);
     setOtp(newOtp);
     if (value && index < 5) {
       inputRefs.current[index + 1]?.focus();
@@ -82,7 +123,7 @@ export default function VerifyOTP() {
           </p>
           <div className="flex items-center justify-center gap-2 mt-1">
             <Mail size={14} className="text-indigo-600" />
-            <p className="text-indigo-600 text-sm font-medium">{email}</p>
+            <p className="text-indigo-600 text-sm font-medium">{email || "your email"}</p>
           </div>
         </div>
 
@@ -113,12 +154,23 @@ export default function VerifyOTP() {
             </Button>
           </form>
 
-          <p className="text-center text-gray-500 text-sm mt-6">
-            Wrong email?{" "}
-            <Link to="/register" className="text-indigo-600 hover:text-indigo-700 font-medium">
-              Go back
+          <div className="flex items-center justify-between text-sm mt-6">
+            <button
+              type="button"
+              disabled={resending || !email || cooldown > 0}
+              onClick={handleResend}
+              className="text-indigo-600 hover:text-indigo-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {resending
+                ? "Sending code..."
+                : cooldown > 0
+                ? `Resend code in ${cooldown}s`
+                : "Resend code"}
+            </button>
+            <Link to="/register" className="text-gray-500 hover:text-gray-700">
+              Wrong email?
             </Link>
-          </p>
+          </div>
         </div>
       </div>
     </div>

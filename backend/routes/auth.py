@@ -1,3 +1,4 @@
+import os
 import sib_api_v3_sdk
 from sib_api_v3_sdk.rest import ApiException
 from datetime import datetime, timezone, timedelta
@@ -14,6 +15,21 @@ from bson import ObjectId
 from utils.auth_helper import jwt_required, get_current_company
 
 auth_bp = Blueprint("auth", __name__)
+
+OTP_COOLDOWN_SECONDS = 60
+
+def check_otp_cooldown(email: str) -> tuple[bool, int]:
+    """Returns (is_in_cooldown, remaining_seconds)."""
+    otp_record = otp_collection.find_one({"email": email})
+    if otp_record and otp_record.get("last_sent_at"):
+        last_sent = otp_record["last_sent_at"]
+        if last_sent.tzinfo is None:
+            last_sent = last_sent.replace(tzinfo=timezone.utc)
+        elapsed = (datetime.now(timezone.utc) - last_sent).total_seconds()
+        if elapsed < OTP_COOLDOWN_SECONDS:
+            remaining = int(OTP_COOLDOWN_SECONDS - elapsed)
+            return True, remaining
+    return False, 0
 
 # ── Verify Cloudflare Turnstile token ──────────────────────────────────────────
 def verify_turnstile(token: str, remote_ip: str = None) -> bool:
@@ -60,7 +76,12 @@ def verify_turnstile(token: str, remote_ip: str = None) -> bool:
         return False
 
 # ── Send OTP email via Brevo ──────────────────────────────────────────────────
-def send_otp_email(to_email: str, otp: str, company_name: str) -> bool:
+def send_otp_email(to_email: str, otp: str, company_name: str) -> tuple[bool, str]:
+    if not Config.BREVO_API_KEY:
+        err = "BREVO_API_KEY is not configured"
+        print(f"[Brevo OTP] Error: {err}")
+        return False, err
+
     try:
         configuration         = sib_api_v3_sdk.Configuration()
         configuration.api_key["api-key"] = Config.BREVO_API_KEY
@@ -96,20 +117,24 @@ def send_otp_email(to_email: str, otp: str, company_name: str) -> bool:
             html_content=html_content
         )
 
-        api_instance.send_transac_email(send_smtp_email)
-        return True
+        resp = api_instance.send_transac_email(send_smtp_email)
+        message_id = getattr(resp, "message_id", str(resp))
+        print(f"[Brevo OTP] Email sent successfully to {to_email}. Message ID: {message_id}")
+        return True, ""
 
     except ApiException as e:
-        print(f"Brevo API error: {e}")
-        return False
+        status_code = getattr(e, "status", None)
+        body = getattr(e, "body", str(e))
+        print(f"[Brevo OTP] API Error - Status: {status_code}, Body: {body}")
+        return False, f"Email provider error ({status_code})"
     except Exception as e:
-        print(f"Email error: {e}")
-        return False
+        print(f"[Brevo OTP] Unexpected error: {e}")
+        return False, str(e)
 
 # ── POST /api/auth/register ───────────────────────────────────────────────────
 @auth_bp.route("/register", methods=["POST"])
 def register():
-    body = request.get_json() or {}
+    body = request.get_json(silent=True) or {}
 
     print(f"\n[DEBUG /api/auth/register] Received request keys: {list(body.keys())}")
     required = {"email", "password", "company_name", "full_name"}
@@ -133,47 +158,159 @@ def register():
     full_name    = body["full_name"].strip()
 
     # Check if email already exists
-    if companies_collection.find_one({"email": email}):
-        return jsonify({"success": False, "error": "Email already registered"}), 409
+    existing = companies_collection.find_one({"email": email})
+    if existing:
+        if not existing.get("is_verified"):
+            # Enforce 60-second cooldown
+            in_cooldown, remaining = check_otp_cooldown(email)
+            if in_cooldown:
+                return jsonify({
+                    "success": False,
+                    "error": f"Please wait {remaining} seconds before requesting another code",
+                    "cooldown_remaining": remaining
+                }), 429
 
-    # Hash password and create company doc
+            # Update stored password hash, company_name and full_name with newly submitted values
+            companies_collection.update_one(
+                {"_id": existing["_id"]},
+                {"$set": {
+                    "password": hash_password(password),
+                    "company_name": company_name,
+                    "full_name": full_name
+                }}
+            )
+
+            # Generate fresh OTP and send verification email
+            otp = generate_otp()
+            company_id = str(existing["_id"])
+            now_utc = datetime.now(timezone.utc)
+
+            email_sent, err_msg = send_otp_email(email, otp, company_name)
+            if not email_sent:
+                return jsonify({
+                    "success": False,
+                    "error": f"Failed to send verification email: {err_msg}"
+                }), 502
+
+            otp_collection.update_one(
+                {"email": email},
+                {"$set": {
+                    "otp": otp,
+                    "company_id": company_id,
+                    "expires_at": now_utc + timedelta(minutes=5),
+                    "last_sent_at": now_utc
+                }},
+                upsert=True
+            )
+
+            return jsonify({
+                "success": True,
+                "requires_verification": True,
+                "message": "Verification code sent. Check your email for OTP.",
+                "company_id": company_id
+            }), 200
+
+        return jsonify({"success": False, "error": "An account with this email already exists"}), 409
+
+    # Fresh registration: generate OTP and send email before inserting company
+    otp = generate_otp()
+    email_sent, err_msg = send_otp_email(email, otp, company_name)
+    if not email_sent:
+        return jsonify({
+            "success": False,
+            "error": f"Failed to send verification email: {err_msg}"
+        }), 502
+
+    now_utc = datetime.now(timezone.utc)
     company_doc = {
         "email"       : email,
         "password"    : hash_password(password),
         "company_name": company_name,
         "full_name"   : full_name,
         "is_verified" : False,
-        "created_at"  : datetime.now(timezone.utc)
+        "created_at"  : now_utc
     }
 
     inserted   = companies_collection.insert_one(company_doc)
     company_id = str(inserted.inserted_id)
 
-    # Generate OTP
-    otp = generate_otp()
-
-    # Store OTP in DB with 5 minute expiry
-    otp_collection.insert_one({
-        "email"     : email,
-        "otp"       : otp,
-        "company_id": company_id,
-        "expires_at": datetime.now(timezone.utc) + timedelta(minutes=5)
-    })
-
-    # Send OTP email via Brevo
-    email_sent = send_otp_email(email, otp, company_name)
+    # Store OTP in DB with 5 minute expiry and record last_sent_at for cooldown
+    otp_collection.update_one(
+        {"email": email},
+        {"$set": {
+            "email"       : email,
+            "otp"         : otp,
+            "company_id"  : company_id,
+            "expires_at"  : now_utc + timedelta(minutes=5),
+            "last_sent_at": now_utc
+        }},
+        upsert=True
+    )
 
     return jsonify({
         "success"   : True,
         "message"   : "Registration successful. Check your email for OTP.",
         "company_id": company_id,
-        "email_sent": email_sent
+        "email_sent": True
     }), 201
+
+# ── POST /api/auth/resend-otp ─────────────────────────────────────────────────
+@auth_bp.route("/resend-otp", methods=["POST"])
+def resend_otp():
+    body  = request.get_json(silent=True) or {}
+    email = body.get("email", "").lower().strip()
+
+    if not email:
+        return jsonify({"success": False, "error": "Email is required"}), 400
+
+    # Generic success response returned whether or not account exists (anti-enumeration)
+    generic_success = {
+        "success": True,
+        "message": "A new verification code has been sent to your email."
+    }
+
+    company = companies_collection.find_one({"email": email})
+    # If account doesn't exist or is already verified, return generic success without revealing status
+    if not company or company.get("is_verified"):
+        return jsonify(generic_success), 200
+
+    # Account exists and is unverified: enforce 60-second cooldown
+    in_cooldown, remaining = check_otp_cooldown(email)
+    if in_cooldown:
+        return jsonify({
+            "success": False,
+            "error": f"Please wait {remaining} seconds before requesting another code",
+            "cooldown_remaining": remaining
+        }), 429
+
+    otp = generate_otp()
+    company_id = str(company["_id"])
+    now_utc = datetime.now(timezone.utc)
+
+    email_sent, err_msg = send_otp_email(email, otp, company.get("company_name", "RecruitMate User"))
+    if not email_sent:
+        return jsonify({
+            "success": False,
+            "error": f"Failed to send verification email: {err_msg}"
+        }), 502
+
+    otp_collection.update_one(
+        {"email": email},
+        {"$set": {
+            "otp": otp,
+            "company_id": company_id,
+            "expires_at": now_utc + timedelta(minutes=5),
+            "last_sent_at": now_utc
+        }},
+        upsert=True
+    )
+
+    return jsonify(generic_success), 200
 
 # ── POST /api/auth/verify-otp ─────────────────────────────────────────────────
 @auth_bp.route("/verify-otp", methods=["POST"])
 def verify_otp():
-    body  = request.get_json()
+    body  = request.get_json(silent=True) or {}
     email = body.get("email", "").lower().strip()
     otp   = body.get("otp", "").strip()
 
@@ -218,7 +355,7 @@ def verify_otp():
 # ── POST /api/auth/login ──────────────────────────────────────────────────────
 @auth_bp.route("/login", methods=["POST"])
 def login():
-    body     = request.get_json() or {}
+    body     = request.get_json(silent=True) or {}
     email    = body.get("email", "").lower().strip()
     password = body.get("password", "")
     totp_code = body.get("totp_code")
@@ -270,6 +407,7 @@ def login():
         "company_name": company["company_name"],
         "company_id"  : str(company["_id"])
     }), 200
+
 # ── GET /api/auth/me ──────────────────────────────────────────────────────────
 @auth_bp.route("/me", methods=["GET"])
 def me():
@@ -282,6 +420,7 @@ def me():
         return jsonify({"success": True, "company": payload}), 200
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 401
+
 @auth_bp.route('/2fa/setup', methods=['POST'])
 @jwt_required
 def setup_2fa():
@@ -319,6 +458,7 @@ def setup_2fa():
         'qr_code': f'data:image/png;base64,{qr_base64}',
         'secret': secret  # shown as text too, for manual entry
     }
+
 @auth_bp.route('/2fa/enable', methods=['POST'])
 @jwt_required
 def enable_2fa():
@@ -329,7 +469,7 @@ def enable_2fa():
     if not company:
         return jsonify({"success": False, "error": "Company not found"}), 404
 
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
     code = data.get('code')
 
     if not code:
@@ -376,7 +516,7 @@ def disable_2fa():
     if not company:
         return jsonify({"success": False, "error": "Company not found"}), 404
 
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
     password = data.get("password")
 
     if not password:

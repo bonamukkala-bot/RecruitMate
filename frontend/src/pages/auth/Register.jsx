@@ -28,15 +28,15 @@ export default function Register() {
     setLoading(true);
     try {
       const data = await register({ ...form, turnstile_token: turnstileToken });
-      if (data.success) {
-        toast.success("Registration successful! Check your email for OTP.");
+      if (data.success || data.requires_verification) {
+        toast.success(data.message || "Registration successful! Check your email for OTP.");
         navigate("/verify-otp", { state: { email: form.email } });
       } else {
         const msg = data.error || "Registration failed";
         setErrorMessage(msg);
         toast.error(msg);
         setTurnstileToken("");
-        setTurnstileKey((k) => k + 1); // force widget to re-render/reset
+        setTurnstileKey((k) => k + 1);
       }
     } catch (err) {
       const msg = err.response?.data?.error || err.response?.data?.message || err.message || "Registration failed";
