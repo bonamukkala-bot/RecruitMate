@@ -241,7 +241,10 @@ def pipeline_schedule(candidate_id):
         if not job_title:
             return jsonify({"success": False, "error": "Missing required field: job_title"}), 400
 
-        eval_data  = candidate.get("evaluation") or {}
+        eval_data = candidate.get("evaluation") or {}
+        if not eval_data or eval_data.get("overall_score") is None:
+            return jsonify({"success": False, "error": "Evaluate answers before scheduling the next round"}), 400
+
         role_level = body.get("role_level") or "mid"
 
         result = schedule_next_step(
@@ -254,13 +257,17 @@ def pipeline_schedule(candidate_id):
 
         if result.get("success"):
             schedule_data = result.get("data") or {}
+            decision = schedule_data.get("decision", "advance")
+            update_payload = {
+                "schedule"  : schedule_data,
+                "updated_at": datetime.now(timezone.utc)
+            }
+            if decision != "reject":
+                update_payload["status"] = decision
+
             candidates_collection.update_one(
                 {"_id": cand_oid},
-                {"$set": {
-                    "schedule"  : schedule_data,
-                    "status"    : schedule_data.get("decision", "advance"),
-                    "updated_at": datetime.now(timezone.utc)
-                }}
+                {"$set": update_payload}
             )
             log_pipeline(company["company_id"], candidate_id,
                         str(job["_id"]), "scheduler",

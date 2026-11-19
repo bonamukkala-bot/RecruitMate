@@ -358,11 +358,16 @@ export default function CandidateDetail() {
     try {
       const res = await pipelineAPI.schedule(id, { role_level: "junior" });
       if (res.data.success) {
-        toast.success(`Scheduled: ${res.data.data.next_step}`);
-        setCandidate(prev => ({ ...prev, schedule: res.data.data }));
+        const scheduleData = res.data.data;
+        if (scheduleData?.decision === "reject") {
+          toast("Recommended: Reject", { icon: "⚠️" });
+        } else {
+          toast.success(`Scheduled: ${scheduleData.next_step}`);
+        }
+        setCandidate(prev => ({ ...prev, schedule: scheduleData }));
       }
-    } catch {
-      toast.error("Scheduling failed");
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Scheduling failed");
     } finally {
       setScheduling(false);
     }
@@ -628,12 +633,14 @@ export default function CandidateDetail() {
         <div className="card border-ledger-200 bg-ledger-50">
           <h3 className="font-semibold text-ink-500 mb-3 flex items-center gap-2">
             <Calendar size={16} className="text-ledger-600" />
-            Scheduled
+            {candidate.schedule.decision === "reject" ? "Recommended: Reject" : "Scheduled"}
           </h3>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div>
               <p className="text-xs text-stone-500">Next Step</p>
-              <p className="text-sm font-medium text-ink-500 mt-1">{candidate.schedule.next_step}</p>
+              <p className="text-sm font-medium text-ink-500 mt-1">
+                {candidate.schedule.decision === "reject" ? "Recommended: Reject" : candidate.schedule.next_step}
+              </p>
             </div>
             <div>
               <p className="text-xs text-stone-500">Decision</p>

@@ -114,11 +114,16 @@ function PipelineCard({ candidate, onAction, navigate }) {
     try {
       const res = await pipelineAPI.schedule(candidate._id, { role_level: "junior" });
       if (res.data.success) {
-        toast.success(`Scheduled: ${res.data.data.next_step}`);
+        const scheduleData = res.data.data;
+        if (scheduleData?.decision === "reject") {
+          toast("Recommended: Reject", { icon: "⚠️" });
+        } else {
+          toast.success(`Scheduled: ${scheduleData.next_step}`);
+        }
         onAction();
       }
-    } catch {
-      toast.error("Scheduling failed");
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Scheduling failed");
     } finally {
       setScheduling(false);
     }
@@ -207,7 +212,9 @@ function PipelineCard({ candidate, onAction, navigate }) {
       {candidate.schedule && (
         <div className="flex items-center gap-2 mb-3 p-2 bg-ledger-50 rounded-lg border border-ledger-100">
           <Calendar size={12} className="text-ledger-600" />
-          <span className="text-xs text-ledger-600 font-medium">{candidate.schedule.next_step}</span>
+          <span className="text-xs text-ledger-600 font-medium">
+            {candidate.schedule.decision === "reject" ? "Recommended: Reject" : candidate.schedule.next_step}
+          </span>
           <span className="text-xs text-stone-400">· {candidate.schedule.scheduled_time}</span>
         </div>
       )}
