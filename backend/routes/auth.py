@@ -18,10 +18,14 @@ auth_bp = Blueprint("auth", __name__)
 # ── Verify Cloudflare Turnstile token ──────────────────────────────────────────
 def verify_turnstile(token: str, remote_ip: str = None) -> bool:
     if not token:
-        print("[DEBUG verify_turnstile] Token is empty or missing")
+        print("[Turnstile] Verification failed: Token is empty or missing")
         return False
     try:
         secret = os.getenv("TURNSTILE_SECRET_KEY") or Config.TURNSTILE_SECRET_KEY
+        if not secret:
+            print("[Turnstile] Verification failed: TURNSTILE_SECRET_KEY is not configured")
+            return False
+
         payload = {
             "secret": secret,
             "response": token
@@ -34,13 +38,25 @@ def verify_turnstile(token: str, remote_ip: str = None) -> bool:
             data=payload,
             timeout=5
         )
-        result = resp.json()
-        masked_secret = f"{secret[:4]}...{secret[-4:]}" if secret and len(secret) > 8 else "None"
-        print(f"[DEBUG verify_turnstile] Secret in use: {masked_secret}")
-        print(f"[DEBUG verify_turnstile] Cloudflare siteverify result: {result}")
-        return result.get("success", False)
+        status_code = resp.status_code
+        try:
+            result = resp.json()
+        except Exception:
+            result = {}
+
+        success = result.get("success", False)
+        error_codes = result.get("error-codes", [])
+
+        print(f"[Turnstile] Siteverify HTTP status: {status_code}, success: {success}, error-codes: {error_codes}")
+        return bool(success)
+    except requests.exceptions.Timeout:
+        print("[Turnstile] Siteverify error: Request timed out after 5 seconds")
+        return False
+    except requests.exceptions.RequestException as e:
+        print(f"[Turnstile] Siteverify network error: {e}")
+        return False
     except Exception as e:
-        print(f"[DEBUG verify_turnstile] Verification exception: {e}")
+        print(f"[Turnstile] Siteverify error: {e}")
         return False
 
 # ── Send OTP email via Brevo ──────────────────────────────────────────────────

@@ -89,7 +89,7 @@ def _decide_next_step(overall_score: int, role_level: str, hiring_recommendation
         "on the fence"      : 0,
         "do not recommend"  : -1
     }
-    rec_weight = rec_map.get(hiring_recommendation.lower(), 0)
+    rec_weight = rec_map.get((hiring_recommendation or "").lower(), 0)
 
     if overall_score >= threshold["l2"] and rec_weight >= 1:
         next_step = "L2 Technical Round"
@@ -128,8 +128,12 @@ def schedule_next_step(
     """
     raw = ""
     try:
+        eval_data = eval_data or {}
+        candidate_data = candidate_data or {}
+        job_data = job_data or {}
+
         overall_score         = eval_data.get("overall_score", 0)
-        hiring_recommendation = eval_data.get("hiring_recommendation", "on the fence")
+        hiring_recommendation = eval_data.get("hiring_recommendation") or "on the fence"
 
         # Step 1 — Rule-based decision (no LLM, instant)
         schedule = _decide_next_step(overall_score, role_level, hiring_recommendation)
@@ -144,7 +148,11 @@ def schedule_next_step(
             decision=schedule["decision"]
         ))
 
-        email_content = json.loads(_clean(raw))
+        cleaned = _clean(raw)
+        if not cleaned:
+            raise ValueError("Empty response received from LLM.")
+
+        email_content = json.loads(cleaned)
 
         return {
             "success": True,
@@ -162,9 +170,13 @@ def schedule_next_step(
         }
 
     except json.JSONDecodeError as e:
+        import traceback
+        traceback.print_exc()
         print(f"❌ [scheduler] JSON parse failed: {e}\nRaw output: {raw}")
         return {"success": False, "error": f"JSON parse failed: {e}", "raw_response": raw}
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(f"❌ [scheduler] Error: {e}")
         return {"success": False, "error": str(e), "raw_response": raw}
 

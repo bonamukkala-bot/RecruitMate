@@ -203,20 +203,46 @@ def pipeline_interview_close(candidate_id):
 @jwt_required
 def pipeline_schedule(candidate_id):
     company = get_current_company()
-    body    = request.get_json() or {}
+    body    = request.get_json(silent=True) or {}
 
     try:
+        try:
+            cand_oid = ObjectId(candidate_id)
+        except Exception:
+            return jsonify({"success": False, "error": "Invalid candidate ID"}), 400
+
         candidate = candidates_collection.find_one({
-            "_id"       : ObjectId(candidate_id),
+            "_id"       : cand_oid,
             "company_id": company["company_id"]
         })
         if not candidate:
             return jsonify({"success": False, "error": "Candidate not found"}), 404
 
-        job = jobs_collection.find_one({"_id": ObjectId(candidate["job_id"])})
+        if (candidate.get("status") or "").lower() == "rejected":
+            return jsonify({"success": False, "error": "Cannot schedule a rejected candidate"}), 400
 
-        eval_data  = candidate.get("evaluation", {})
-        role_level = body.get("role_level", "mid")
+        candidate_email = (candidate.get("candidate_email") or "").strip()
+        if not candidate_email:
+            return jsonify({"success": False, "error": "Missing required field: candidate_email"}), 400
+
+        job_id = candidate.get("job_id")
+        if not job_id:
+            return jsonify({"success": False, "error": "Job not found for this candidate"}), 404
+
+        try:
+            job = jobs_collection.find_one({"_id": ObjectId(job_id)})
+        except Exception:
+            job = None
+
+        if not job:
+            return jsonify({"success": False, "error": "Job not found for this candidate"}), 404
+
+        job_title = (job.get("job_title") or "").strip()
+        if not job_title:
+            return jsonify({"success": False, "error": "Missing required field: job_title"}), 400
+
+        eval_data  = candidate.get("evaluation") or {}
+        role_level = body.get("role_level") or "mid"
 
         result = schedule_next_step(
             candidate_data=candidate,
@@ -226,22 +252,25 @@ def pipeline_schedule(candidate_id):
             role_level=role_level
         )
 
-        if result["success"]:
+        if result.get("success"):
+            schedule_data = result.get("data") or {}
             candidates_collection.update_one(
-                {"_id": ObjectId(candidate_id)},
+                {"_id": cand_oid},
                 {"$set": {
-                    "schedule"  : result["data"],
-                    "status"    : result["data"]["decision"],
+                    "schedule"  : schedule_data,
+                    "status"    : schedule_data.get("decision", "advance"),
                     "updated_at": datetime.now(timezone.utc)
                 }}
             )
             log_pipeline(company["company_id"], candidate_id,
-                        candidate["job_id"], "scheduler",
-                        "success", result["data"])
+                        str(job["_id"]), "scheduler",
+                        "success", schedule_data)
 
-        return jsonify(result), 200 if result["success"] else 500
+        return jsonify(result), 200 if result.get("success") else 500
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({"success": False, "error": str(e)}), 500
 
 # ── GET /api/pipeline/logs/<candidate_id> — Get pipeline audit logs ───────────
