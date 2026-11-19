@@ -14,7 +14,7 @@ class Config:
 
     # MongoDB
     MONGO_URI          = os.getenv("MONGO_URI")
-    DB_NAME            = os.getenv("MONGO_DB") or "recruitmate_dev"
+    DB_NAME            = os.getenv("MONGO_DB") or "recruitmate"
 
     # JWT
     JWT_SECRET         = os.getenv("JWT_SECRET")
