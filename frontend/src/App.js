@@ -78,14 +78,14 @@ export default function App() {
             <Route path="candidates"      element={<Candidates />} />
             <Route path="candidates/compare" element={<CandidateComparison />} />
             <Route path="candidates/:id"  element={<CandidateDetail />} />
-            <Route path="pipeline" element={<Pipeline />} />
-            <Route path="settings" element={<Settings />} />
+            <Route path="pipeline"           element={<Pipeline />} />
+            <Route path="analytics"          element={<Analytics />} />
+            <Route path="heatmap"            element={<Heatmap />} />
+            <Route path="settings"           element={<Settings />} />
           </Route>
 
           {/* Fallback */}
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
-          <Route path="analytics" element={<Analytics />} />
-          <Route path="heatmap" element={<Heatmap />} />
         </Routes>
       </AuthProvider>
     </BrowserRouter>

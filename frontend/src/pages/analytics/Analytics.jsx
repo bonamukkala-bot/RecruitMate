@@ -5,8 +5,7 @@ import {
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, PieChart as RPieChart, Pie, Cell,
-  FunnelChart, Funnel, LabelList, AreaChart, Area
+  ResponsiveContainer, PieChart as RPieChart, Pie, Cell
 } from "recharts";
 import { jobsAPI } from "../../api/jobs";
 import LoadingSpinner from "../../components/ui/LoadingSpinner";
@@ -106,7 +105,7 @@ export default function Analytics() {
   }));
 
   return (
-    <div className="space-y-6">
+    <div className="max-w-7xl mx-auto space-y-6">
 
       {/* Header */}
       <div>

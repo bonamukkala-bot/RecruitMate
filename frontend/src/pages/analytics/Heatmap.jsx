@@ -109,7 +109,7 @@ export default function Heatmap() {
   // ── No jobs with completed interviews at all ──────────────────────────────
   if (jobs.length === 0) {
     return (
-      <div className="space-y-6">
+      <div className="max-w-7xl mx-auto space-y-6">
         <div>
           <h1 className="text-2xl font-bold text-ink-500">Interview Heatmap</h1>
           <p className="text-stone-500 text-sm mt-1">Performance insights from completed interviews</p>
@@ -133,7 +133,7 @@ export default function Heatmap() {
   }));
 
   return (
-    <div className="space-y-6">
+    <div className="max-w-7xl mx-auto space-y-6">
 
       {/* Header + job selector */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
