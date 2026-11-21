@@ -691,8 +691,25 @@ def submit_public_interview(token):
 
         job = jobs_collection.find_one({"_id": ObjectId(candidate["job_id"])})
 
-        # ── Terminated: save transcript up to that point and skip evaluation ───
+        # ── Terminated: save transcript up to that point and evaluate on transcript so far ───
         if terminated:
+            eval_data = None
+            if qa_pairs or candidate.get("interview_turns"):
+                try:
+                    eval_res = evaluate_answers(
+                        candidate_data=candidate,
+                        job_data=job,
+                        answer_type="speech",
+                        answers={
+                            "qa_pairs": qa_pairs,
+                            "interview_turns": candidate.get("interview_turns", [])
+                        }
+                    )
+                    if eval_res.get("success"):
+                        eval_data = eval_res.get("data")
+                except Exception as e:
+                    print(f"⚠️ [pipeline] Terminated interview evaluation error: {e}")
+
             update_fields = {
                 "interview_status"   : "completed",
                 "interview_answers"  : qa_pairs,
@@ -704,6 +721,10 @@ def submit_public_interview(token):
                 "schedule_pending"   : False,
                 "updated_at"         : datetime.now(timezone.utc)
             }
+            if eval_data:
+                update_fields["evaluation"] = eval_data
+                update_fields["interview_score"] = eval_data.get("overall_score", 0)
+
             if candidate.get("interview_turns"):
                 update_fields["interview_turns"] = candidate.get("interview_turns")
 
@@ -724,14 +745,15 @@ def submit_public_interview(token):
             send_owner_notification(candidate["company_id"], "interview_complete", {
                 "candidate_name": candidate.get("candidate_name", ""),
                 "job_title": job.get("job_title", "") if job else "",
-                "score": 0,
+                "score": eval_data.get("overall_score", 0) if eval_data else 0,
                 "status": "terminated"
             })
 
             return jsonify({
                 "success"   : True,
                 "decision"  : "terminated",
-                "summary"   : termination_reason
+                "summary"   : termination_reason,
+                "evaluation": eval_data
             }), 200
 
         # ── Agent 5: Auto evaluate ────────────────────────────────────────────
@@ -739,7 +761,10 @@ def submit_public_interview(token):
             candidate_data=candidate,
             job_data=job,
             answer_type="speech",
-            answers={"qa_pairs": qa_pairs}
+            answers={
+                "qa_pairs": qa_pairs,
+                "interview_turns": candidate.get("interview_turns", [])
+            }
         )
 
         if not eval_result["success"]:

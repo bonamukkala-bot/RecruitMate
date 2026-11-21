@@ -40,6 +40,7 @@ RecruitMate AI turns each step of early-stage hiring into a discrete, auditable 
 - **Resume screening with auto-reject** — resumes (typed or uploaded as PDF/DOCX) are scored 0–100 against the parsed JD; candidates below the configured threshold receive an automatic rejection email with no human step in between.
 - **Per-candidate question generation** — questions are generated from that specific candidate's matched and missing skills, not a static question bank.
 - **Token-secured voice interview portal** — candidates get a unique link (no account, no login) that drives a voice-based interview; the token itself is the access control.
+- **Adaptive interview loop** — in adaptive mode, dynamically evaluates candidate responses after each turn and decides whether to probe deeper, probe knowledge gaps, ask an easier related question, restate, or advance to the next core topic; enforces topic coverage and time constraints while normalizing scores fairly across core questions.
 - **Automated answer evaluation and decisioning** — each answer is scored, an overall score is computed, and the candidate is auto-shortlisted or auto-rejected against a threshold.
 - **Role-aware scheduling** — next-step decisions (next round, HR call, reject) vary by threshold per seniority level (senior / mid / junior), not a single global cutoff.
 - **AI candidate comparison** — given 2–3 shortlisted candidates for the same job, the model picks one and justifies it against actual matched/missing skills and scores rather than generic praise.
@@ -277,6 +278,10 @@ BREVO_SENDER_EMAIL=
 BREVO_SENDER_NAME=
 TURNSTILE_SECRET_KEY=
 FRONTEND_URL=
+# Optional AI / Model configuration
+GROQ_MODEL=
+GROQ_MODEL_HEAVY=
+GROQ_ALLOWED_MODELS=
 ```
 
 **frontend/.env**
@@ -355,7 +360,13 @@ Base path: `/api`. 🔒 = requires `Authorization: Bearer <JWT>`. 🔗 = unauthe
 
 ## AI system details
 
-- **Model:** a single model, Groq's llama-3.3-70b-versatile, is used for every agent; only the temperature and prompt template differ per agent.
+- **Model:** Groq models (`GROQ_MODEL` for fast evaluator/decider turns, `GROQ_MODEL_HEAVY` for deep resume screening and final interview evaluation); configurable with pricing tracking and monthly token budgets in AI Settings.
+- **Adaptive interview loop:**
+  - Evaluates candidate answers turn-by-turn with a 5-second timeout and combined evaluator/decider agent.
+  - Generates contextual follow-ups (`probe_deeper`, `probe_gap`, `easier`, `restate`, `next_core`) constrained by company interview settings (`follow_up_mode`, `max_follow_ups_per_question`, `probe_depth`).
+  - Code-type questions strictly bypass follow-ups (`next_core`).
+  - Enforces prompt-injection defense with `<candidate_answer>` encapsulation and tag neutralization.
+  - Final evaluation runs over the complete threaded transcript using the heavy model, normalizing scores across core questions to preserve fairness without penalizing candidates for harder follow-ups.
 - **Orchestration:** each agent is a standalone LangChain ChatGroq call with a fixed system prompt instructing JSON-only output — there is no LangGraph state machine; the pipeline is orchestrated by the Flask route handlers, not by the LLM.
 - **No retrieval/RAG:** resume and JD text are passed directly into the prompt as plain text.
 - **Contract:** every agent function returns a `{"success": bool, "data": {...}}` shape.

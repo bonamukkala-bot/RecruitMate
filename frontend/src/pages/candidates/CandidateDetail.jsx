@@ -913,7 +913,13 @@ export default function CandidateDetail() {
               <p className="text-2xl font-bold text-ink-500 font-mono">{eval_data.overall_score}</p>
               <p className="text-xs text-stone-500 mt-1">Overall Score</p>
             </div>
-            <div className="bg-stone-50 rounded-xl p-4 text-center col-span-3">
+            {eval_data.depth_score !== undefined && (
+              <div className="bg-stone-50 rounded-xl p-4 text-center">
+                <p className="text-2xl font-bold text-indigo-600 font-mono">{eval_data.depth_score}</p>
+                <p className="text-xs text-stone-500 mt-1">Depth Score</p>
+              </div>
+            )}
+            <div className={`bg-stone-50 rounded-xl p-4 text-center ${eval_data.depth_score !== undefined ? 'col-span-2' : 'col-span-3'}`}>
               <p className="text-sm font-medium text-ink-500">{eval_data.hiring_recommendation}</p>
               <p className="text-xs text-stone-500 mt-1">Hiring Recommendation</p>
             </div>
@@ -948,6 +954,21 @@ export default function CandidateDetail() {
             <p className="text-xs font-semibold text-stone-500 uppercase tracking-wider mb-2">Summary</p>
             <p className="text-sm text-ink-400">{eval_data.summary}</p>
           </div>
+
+          {(eval_data.follow_up_performance || eval_data.consistency || eval_data.explanation) && (
+            <div className="p-4 bg-indigo-50/50 rounded-xl border border-indigo-100 space-y-2">
+              <p className="text-xs font-semibold text-indigo-700 uppercase tracking-wider">Adaptive Evaluation Analysis</p>
+              {eval_data.explanation && (
+                <p className="text-sm text-ink-500"><span className="font-medium text-ink-600">Turn Explanation: </span>{eval_data.explanation}</p>
+              )}
+              {eval_data.follow_up_performance && (
+                <p className="text-sm text-ink-500"><span className="font-medium text-ink-600">Follow-up Performance: </span>{typeof eval_data.follow_up_performance === 'object' ? JSON.stringify(eval_data.follow_up_performance) : eval_data.follow_up_performance}</p>
+              )}
+              {eval_data.consistency && (
+                <p className="text-sm text-ink-500"><span className="font-medium text-ink-600">Consistency: </span>{eval_data.consistency}</p>
+              )}
+            </div>
+          )}
 
           {/* Per question scores */}
           {eval_data.per_question && (
