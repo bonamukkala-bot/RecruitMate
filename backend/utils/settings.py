@@ -1,5 +1,7 @@
 import copy
 import re
+import base64
+import io
 from datetime import datetime, timezone
 from config import Config
 from utils.db import company_settings_collection
@@ -10,6 +12,66 @@ from utils.email_renderer import validate_template_variables
 def assert_safe_db():
     if Config.DB_NAME == "recruitmate":
         raise RuntimeError("Operation prohibited: Connected to production database 'recruitmate'!")
+
+# ── Logo Image Validation ────────────────────────────────────────────────────
+def validate_logo_bytes(raw_bytes: bytes) -> tuple[bool, str, str]:
+    """
+    Validates image bytes using size, magic bytes, and PIL decode.
+    Returns (is_valid, mime_type, error_message).
+    Only PNG and JPG are allowed, max 1MB.
+    """
+    if len(raw_bytes) > 1024 * 1024:
+        return False, "", "Logo file exceeds maximum size of 1 MB"
+
+    if len(raw_bytes) < 8:
+        return False, "", "Invalid or empty image file"
+
+    # Check magic bytes
+    is_png = raw_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+    is_jpeg = raw_bytes.startswith(b"\xff\xd8\xff")
+
+    if not (is_png or is_jpeg):
+        return False, "", "Invalid image format. Only PNG and JPG images are allowed."
+
+    # Prevent executable / script polyglots
+    dangerous_headers = [b"MZ", b"\x7fELF", b"<?php", b"<script", b"<html"]
+    for danger in dangerous_headers:
+        if raw_bytes.startswith(danger):
+            return False, "", "Executable or script files are prohibited."
+
+    # Validate image decode with Pillow
+    try:
+        from PIL import Image
+        img = Image.open(io.BytesIO(raw_bytes))
+        img.verify()
+        fmt = (img.format or "").upper()
+        if fmt not in ("PNG", "JPEG"):
+            return False, "", f"Unsupported image format '{fmt}'. Only PNG and JPG are allowed."
+        mime = "image/png" if fmt == "PNG" else "image/jpeg"
+        return True, mime, ""
+    except Exception as img_err:
+        return False, "", f"Could not decode image: {img_err}"
+
+def validate_logo_data(logo_str: str) -> tuple[bool, str]:
+    """
+    Validates a logo string (either a base64 data URI or empty).
+    Returns (is_valid, error_message).
+    """
+    if not logo_str or not isinstance(logo_str, str):
+        return True, ""
+    if not logo_str.startswith("data:image/"):
+        return True, ""  # URL or empty
+
+    try:
+        parts = logo_str.split(",", 1)
+        if len(parts) != 2:
+            return False, "Invalid base64 data URI"
+        raw_b64 = parts[1]
+        raw_bytes = base64.b64decode(raw_b64)
+        is_valid, _, err_msg = validate_logo_bytes(raw_bytes)
+        return is_valid, err_msg
+    except Exception as e:
+        return False, f"Invalid logo image encoding: {e}"
 
 # ── Default Settings ──────────────────────────────────────────────────────────
 # These values reproduce the hardcoded default behavior across the codebase
@@ -93,11 +155,19 @@ DEFAULT_SETTINGS = {
         "temperature": 0.3,
         "monthly_token_budget": 0        # 0 = unlimited, positive int otherwise
     },
+    "company": {
+        "display_name": "",
+        "website": "",
+        "logo": "",
+        "brand_color": "#4f46e5",
+        "support_email": ""
+    },
     "privacy": {
         "data_retention_days": 0,        # 0 = keep forever, else 30-1095
         "consent_text": (
             "I consent to the collection and processing of my interview audio, "
-            "video, and responses for the purpose of job application evaluation."
+            "video, and responses for the purpose of job application evaluation "
+            "by RecruitMate AI and the hiring organization."
         ),
         "record_proctoring_events": True
     },
@@ -319,20 +389,59 @@ def validate_section(section: str, data: dict) -> tuple[bool, str | dict]:
         except (ValueError, TypeError):
             return False, "monthly_token_budget must be a non-negative integer (0 for unlimited)"
 
-    # 5. Privacy section validation
+    # 5. Company section validation
+    elif section == "company":
+        name = merged.get("display_name", "")
+        if not isinstance(name, str) or len(name) > 100:
+            return False, "display_name must be a string up to 100 characters"
+
+        website = (merged.get("website") or "").strip()
+        if website:
+            url_pattern = re.compile(r"^https?://[^\s/$.?#].[^\s]*$", re.IGNORECASE)
+            if not url_pattern.match(website):
+                return False, "website must be a valid http or https URL"
+        merged["website"] = website
+
+        support_email = (merged.get("support_email") or "").strip()
+        if support_email:
+            email_pattern = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+            if not email_pattern.match(support_email):
+                return False, "support_email must be a valid email address"
+        merged["support_email"] = support_email
+
+        brand_color = (merged.get("brand_color") or "#4f46e5").strip()
+        color_pattern = re.compile(r"^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$")
+        if not color_pattern.match(brand_color):
+            return False, "brand_color must be a valid hex color code (e.g. #4f46e5)"
+        merged["brand_color"] = brand_color
+
+        logo = merged.get("logo", "")
+        if logo and isinstance(logo, str) and logo.startswith("data:image/"):
+            valid_logo, err_msg = validate_logo_data(logo)
+            if not valid_logo:
+                return False, err_msg
+
+    # 6. Privacy section validation
     elif section == "privacy":
-        retention = merged.get("data_retention_days")
-        if not isinstance(retention, int) or (retention != 0 and (retention < 30 or retention > 1095)):
+        retention = merged.get("data_retention_days", 0)
+        try:
+            if isinstance(retention, bool):
+                return False, "data_retention_days must be 0 (keep forever) or between 30 and 1095"
+            retention_int = int(retention)
+            if retention_int != 0 and (retention_int < 30 or retention_int > 1095):
+                return False, "data_retention_days must be 0 (keep forever) or between 30 and 1095"
+            merged["data_retention_days"] = retention_int
+        except (ValueError, TypeError):
             return False, "data_retention_days must be 0 (keep forever) or between 30 and 1095"
 
-        consent = merged.get("consent_text")
-        if not isinstance(consent, str) or len(consent.strip()) == 0 or len(consent) > 2000:
-            return False, "consent_text must be a non-empty string up to 2000 characters"
+        consent = merged.get("consent_text", "")
+        if not isinstance(consent, str) or len(consent.strip()) == 0 or len(consent) > 5000:
+            return False, "consent_text must be a non-empty string up to 5000 characters"
 
         if not isinstance(merged.get("record_proctoring_events"), bool):
             return False, "record_proctoring_events must be a boolean"
 
-    # 6. Integrations section validation
+    # 7. Integrations section validation
     elif section == "integrations":
         slack_url = merged.get("slack_webhook_url", "").strip()
         if slack_url and not slack_url.startswith("https://hooks.slack.com/"):

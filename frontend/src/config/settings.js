@@ -14,7 +14,9 @@ export const ENABLED_TABS = [
   "interview",
   "email",
   "ai",
-  "team"
+  "team",
+  "company",
+  "privacy"
 ];
 
 export const SETTINGS_TABS = [

@@ -71,6 +71,32 @@ def get_all_settings():
         traceback.print_exc()
         return jsonify({"success": False, "error": f"Failed to fetch settings: {str(e)}"}), 500
 
+# ── GET /api/settings/<section> ───────────────────────────────────────────────
+@settings_bp.route("/<section>", methods=["GET"])
+@jwt_required
+def get_section_settings(section: str):
+    """
+    Get a single settings section for the authenticated company.
+    """
+    try:
+        company = get_current_company()
+        company_id = company.get("company_id")
+        if not company_id:
+            return jsonify({"success": False, "error": "Company ID missing from token"}), 400
+
+        if section not in VALID_SECTIONS:
+            return jsonify({
+                "success": False,
+                "error": f"Invalid section '{section}'. Allowed sections: {sorted(list(VALID_SECTIONS))}"
+            }), 400
+
+        settings = get_settings(company_id)
+        return jsonify({"success": True, "section": section, "settings": settings.get(section, {})}), 200
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": f"Failed to fetch {section} settings: {str(e)}"}), 500
+
 # ── PUT /api/settings/<section> ───────────────────────────────────────────────
 @settings_bp.route("/<section>", methods=["PUT"])
 @jwt_required
@@ -132,6 +158,115 @@ def update_section(section: str):
     except Exception as e:
         traceback.print_exc()
         return jsonify({"success": False, "error": f"Failed to update {section} settings: {str(e)}"}), 500
+
+# ── POST /api/settings/company/logo ──────────────────────────────────────────
+@settings_bp.route("/company/logo", methods=["POST"])
+@jwt_required
+@require_role("admin")
+def upload_company_logo():
+    """
+    Upload company brand logo.
+    Validates file content (max 1 MB, PNG or JPG only via magic bytes & PIL).
+    Stores base64 data URI in company settings under company.logo.
+    Requires 'admin' role or higher.
+    """
+    try:
+        company = get_current_company()
+        company_id = company.get("company_id")
+        if not company_id:
+            return jsonify({"success": False, "error": "Company ID missing from token"}), 400
+
+        if "logo" not in request.files and "file" not in request.files:
+            return jsonify({"success": False, "error": "No logo file provided in request"}), 400
+
+        file = request.files.get("logo") or request.files.get("file")
+        if not file or not file.filename:
+            return jsonify({"success": False, "error": "No file selected"}), 400
+
+        raw_bytes = file.read()
+        from utils.settings import validate_logo_bytes
+        is_valid, mime, err_msg = validate_logo_bytes(raw_bytes)
+        if not is_valid:
+            return jsonify({"success": False, "error": err_msg}), 400
+
+        import base64
+        b64_str = base64.b64encode(raw_bytes).decode("utf-8")
+        data_uri = f"data:{mime};base64,{b64_str}"
+
+        now_utc = datetime.now(timezone.utc)
+        company_settings_collection.update_one(
+            {"company_id": str(company_id)},
+            {
+                "$set": {
+                    "company.logo": data_uri,
+                    "updated_at": now_utc,
+                    "updated_by": company.get("email", "unknown")
+                }
+            },
+            upsert=True
+        )
+
+        log_audit_event(
+            company_id=company_id,
+            action="settings.company_logo_upload",
+            target="company.logo",
+            details={"mime_type": mime, "size_bytes": len(raw_bytes)}
+        )
+
+        return jsonify({
+            "success": True,
+            "message": "Company logo uploaded successfully",
+            "logo": data_uri
+        }), 200
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": f"Failed to upload logo: {str(e)}"}), 500
+
+# ── DELETE /api/settings/company/logo ────────────────────────────────────────
+@settings_bp.route("/company/logo", methods=["DELETE"])
+@jwt_required
+@require_role("admin")
+def delete_company_logo():
+    """
+    Remove company brand logo.
+    Requires 'admin' role or higher.
+    """
+    try:
+        company = get_current_company()
+        company_id = company.get("company_id")
+        if not company_id:
+            return jsonify({"success": False, "error": "Company ID missing from token"}), 400
+
+        now_utc = datetime.now(timezone.utc)
+        company_settings_collection.update_one(
+            {"company_id": str(company_id)},
+            {
+                "$set": {
+                    "company.logo": "",
+                    "updated_at": now_utc,
+                    "updated_by": company.get("email", "unknown")
+                }
+            },
+            upsert=True
+        )
+
+        log_audit_event(
+            company_id=company_id,
+            action="settings.company_logo_delete",
+            target="company.logo",
+            details={}
+        )
+
+        return jsonify({
+            "success": True,
+            "message": "Company logo removed successfully",
+            "logo": ""
+        }), 200
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": f"Failed to remove logo: {str(e)}"}), 500
 
 # ── POST /api/settings/<section>/reset ────────────────────────────────────────
 @settings_bp.route("/<section>/reset", methods=["POST"])

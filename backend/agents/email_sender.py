@@ -299,6 +299,9 @@ def send_interview_link_email(candidate_data: dict, job_data: dict, company_name
         company_id = candidate_data.get("company_id") if isinstance(candidate_data, dict) else None
         settings = get_settings(company_id) if company_id else None
         email_settings = settings.get("email", {}) if settings else {}
+        company_profile = settings.get("company", {}) if settings else {}
+        logo_url = company_profile.get("logo")
+        brand_color = company_profile.get("brand_color")
         sender_name = email_settings.get("sender_name") or Config.BREVO_SENDER_NAME or _BREVO_SENDER_NAME
         reply_to = email_settings.get("reply_to", "").strip() if email_settings else ""
         templates = email_settings.get("templates", {}) if email_settings else {}
@@ -321,7 +324,9 @@ def send_interview_link_email(candidate_data: dict, job_data: dict, company_name
                 rendered_body=rendered_body,
                 company_name=company_name,
                 button_text="Start Your Interview",
-                button_url=interview_url
+                button_url=interview_url,
+                logo_url=logo_url,
+                brand_color=brand_color
             )
         else:
             result = generate_interview_email_content(candidate_data, job_data, company_name, matched_skills or [])
@@ -421,6 +426,9 @@ def send_shortlist_offline_email(candidate_data: dict, job_data: dict, company_n
         company_id = candidate_data.get("company_id") if isinstance(candidate_data, dict) else None
         settings = get_settings(company_id) if company_id else None
         email_settings = settings.get("email", {}) if settings else {}
+        company_profile = settings.get("company", {}) if settings else {}
+        logo_url = company_profile.get("logo")
+        brand_color = company_profile.get("brand_color")
         sender_name = email_settings.get("sender_name") or Config.BREVO_SENDER_NAME or _BREVO_SENDER_NAME
         reply_to = email_settings.get("reply_to", "").strip() if email_settings else ""
         templates = email_settings.get("templates", {}) if email_settings else {}
@@ -442,7 +450,9 @@ def send_shortlist_offline_email(candidate_data: dict, job_data: dict, company_n
             html_body = build_email_html(
                 rendered_body=rendered_body,
                 company_name=company_name,
-                details_box=[("Date", interview_date), ("Time", interview_time), ("Location", location)]
+                details_box=[("Date", interview_date), ("Time", interview_time), ("Location", location)],
+                logo_url=logo_url,
+                brand_color=brand_color
             )
         else:
             result = generate_offline_email_content(candidate_data, job_data, company_name, interview_date, interview_time, location)
@@ -512,6 +522,9 @@ def send_rejection_email(candidate_data: dict, job_data: dict, company_name: str
         company_id = candidate_data.get("company_id") if isinstance(candidate_data, dict) else None
         settings = get_settings(company_id) if company_id else None
         email_settings = settings.get("email", {}) if settings else {}
+        company_profile = settings.get("company", {}) if settings else {}
+        logo_url = company_profile.get("logo")
+        brand_color = company_profile.get("brand_color")
         sender_name = email_settings.get("sender_name") or Config.BREVO_SENDER_NAME or _BREVO_SENDER_NAME
         reply_to = email_settings.get("reply_to", "").strip() if email_settings else ""
         templates = email_settings.get("templates", {}) if email_settings else {}
@@ -532,7 +545,9 @@ def send_rejection_email(candidate_data: dict, job_data: dict, company_name: str
             rendered_body = render_template(custom_rejection["body"], context, escape_html=False)
             html_body = build_email_html(
                 rendered_body=rendered_body,
-                company_name=company_name
+                company_name=company_name,
+                logo_url=logo_url,
+                brand_color=brand_color
             )
         else:
             result = generate_rejection_email_content(candidate_data, job_data, company_name, stage)

@@ -13,5 +13,8 @@ export const settingsAPI = {
   updateMemberStatus: (memberId, status) => api.patch(`/settings/team/members/${memberId}/status`, { status }),
   resendInvite: (memberId) => api.post(`/settings/team/members/${memberId}/resend-invite`),
   removeMember: (memberId) => api.delete(`/settings/team/members/${memberId}`),
-  getAuditLogs: (page = 1, limit = 50) => api.get(`/settings/team/activity?page=${page}&limit=${limit}`)
+  getAuditLogs: (page = 1, limit = 50) => api.get(`/settings/team/activity?page=${page}&limit=${limit}`),
+  uploadLogo: (formData) => api.post("/settings/company/logo", formData, { headers: { "Content-Type": "multipart/form-data" } }),
+  deleteLogo: () => api.delete("/settings/company/logo"),
+  purgeExpired: (execute = false) => api.post("/privacy/purge-expired", { execute })
 };

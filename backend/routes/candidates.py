@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify
-from utils.db import candidates_collection, jobs_collection, audit_logs_collection
+from utils.db import candidates_collection, jobs_collection, audit_logs_collection, pipeline_collection
 from utils.auth_helper import jwt_required, get_current_company, require_role, log_audit_event
 from utils.file_extractor import extract_text_from_file
 from agents.resume_screener import screen_resume
@@ -719,3 +719,61 @@ def delete_candidate(candidate_id):
         return jsonify({"success": True, "message": "Candidate deleted"}), 200
     except Exception:
         return jsonify({"success": False, "error": "Invalid candidate ID"}), 400
+
+# ── DELETE /api/candidates/<candidate_id>/data — Hard delete all data ─────────
+@candidates_bp.route("/<candidate_id>/data", methods=["DELETE"])
+@candidates_bp.route("/detail/<candidate_id>/data", methods=["DELETE"])
+@jwt_required
+@require_role("admin")
+def hard_delete_candidate_data(candidate_id: str):
+    """
+    Hard-deletes candidate and all related records (evaluations, interview events,
+    schedule, files, pipeline logs).
+    Owner/admin only.
+    Audit-logged: stores only candidate_id and SHA-256 hash of email, not personal data.
+    """
+    company = get_current_company()
+    company_id = company["company_id"]
+
+    try:
+        cand_oid = ObjectId(candidate_id)
+    except Exception:
+        return jsonify({"success": False, "error": "Invalid candidate ID"}), 400
+
+    candidate = candidates_collection.find_one({
+        "_id": cand_oid,
+        "company_id": company_id
+    })
+    if not candidate:
+        return jsonify({"success": False, "error": "Candidate not found"}), 404
+
+    # Compute privacy-safe hash of email
+    import hashlib
+    raw_email = (candidate.get("candidate_email") or "").strip().lower()
+    email_hash = hashlib.sha256(raw_email.encode("utf-8")).hexdigest() if raw_email else ""
+
+    # Delete pipeline logs
+    pipeline_collection.delete_many({
+        "$or": [{"candidate_id": str(candidate_id)}, {"candidate_id": cand_oid}]
+    })
+
+    # Delete candidate record
+    candidates_collection.delete_one({"_id": cand_oid})
+
+    # Audit log entry storing ONLY candidate_id and email_hash (no raw PII)
+    log_audit_event(
+        company_id=company_id,
+        action="candidate.hard_delete",
+        target={
+            "candidate_id": str(candidate_id),
+            "email_hash": email_hash
+        },
+        candidate_id=str(candidate_id),
+        email_hash=email_hash,
+        details={"status": "hard_deleted", "email_hash": email_hash}
+    )
+
+    return jsonify({
+        "success": True,
+        "message": "Candidate and all associated data permanently deleted"
+    }), 200

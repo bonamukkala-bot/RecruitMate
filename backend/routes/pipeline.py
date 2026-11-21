@@ -454,8 +454,10 @@ def get_public_interview(token):
             )
 
         # Retrieve safe interview configuration subset for candidate
-        from utils.settings import get_settings
+        from utils.settings import get_settings, DEFAULT_SETTINGS
         company_settings = get_settings(candidate.get("company_id", ""))
+        company_profile = company_settings.get("company", {})
+        privacy_settings = company_settings.get("privacy", {})
         interview_settings = company_settings.get("interview", {})
         proctoring = interview_settings.get("proctoring", {})
 
@@ -471,20 +473,59 @@ def get_public_interview(token):
         duration_minutes = int(interview_settings.get("duration_minutes", 30))
         per_question_seconds = max(30, int((duration_minutes * 60) / max(1, len(final_questions))))
 
+        consent_text = privacy_settings.get("consent_text") or DEFAULT_SETTINGS["privacy"]["consent_text"]
+        record_proctoring = bool(privacy_settings.get("record_proctoring_events", True))
+        brand_color = company_profile.get("brand_color") or "#4f46e5"
+        company_logo = company_profile.get("logo") or ""
+        company_display_name = company_profile.get("display_name") or candidate.get("company_name", "RecruitMate")
+
         return jsonify({
             "success"             : True,
             "candidate_name"      : candidate["candidate_name"],
-            "job_title"           : job["job_title"] if job else "",
-            "company_name"        : candidate.get("company_name", "RecruitMate"),
+            "job_title"           : (job.get("job_title") or job.get("title", "")) if job else "",
+            "company_name"        : company_display_name,
+            "company_logo"        : company_logo,
+            "brand_color"         : brand_color,
             "questions"           : final_questions,
             "total"               : len(final_questions),
             "duration_minutes"    : duration_minutes,
             "per_question_seconds": per_question_seconds,
-            "proctoring"          : safe_proctoring
+            "proctoring"          : safe_proctoring,
+            "consent_text"        : consent_text,
+            "consent_required"    : True,
+            "record_proctoring_events": record_proctoring
         }), 200
 
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
+# ── POST /api/pipeline/interview/public/<token>/consent ───────────────────────
+@pipeline_bp.route("/interview/public/<token>/consent", methods=["POST"])
+def record_public_interview_consent(token):
+    try:
+        candidate = candidates_collection.find_one({"interview_token": token})
+        if not candidate:
+            return jsonify({"success": False, "error": "Invalid link"}), 404
+
+        body = request.get_json() or {}
+        if not body.get("consent_accepted"):
+            return jsonify({"success": False, "error": "Consent must be accepted"}), 400
+
+        now_utc = datetime.now(timezone.utc)
+        candidates_collection.update_one(
+            {"interview_token": token},
+            {
+                "$set": {
+                    "consent_accepted": True,
+                    "consented_at": now_utc,
+                    "consent_version": body.get("consent_version") or body.get("consent_text", "")
+                }
+            }
+        )
+        return jsonify({"success": True, "message": "Consent recorded"}), 200
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
 # ── POST /api/pipeline/interview/public/<token>/submit ────────────────────────
 @pipeline_bp.route("/interview/public/<token>/submit", methods=["POST"])
 def submit_public_interview(token):
@@ -496,11 +537,28 @@ def submit_public_interview(token):
         if candidate.get("interview_status") == "completed":
             return jsonify({"success": False, "error": "Already submitted"}), 400
 
-        body           = request.get_json()
+        body           = request.get_json() or {}
         qa_pairs       = body.get("qa_pairs", [])
         integrity_log  = body.get("integrity_log", [])
         terminated     = body.get("terminated", False)
         termination_reason = body.get("termination_reason")
+
+        # Verify candidate consent (mandatory before interview completion)
+        has_consent = candidate.get("consent_accepted") or body.get("consent_accepted")
+        if not has_consent:
+            return jsonify({
+                "success": False,
+                "error": "Candidate consent is required before completing interview"
+            }), 400
+
+        # Retrieve company privacy settings
+        from utils.settings import get_settings
+        company_settings = get_settings(candidate.get("company_id", ""))
+        record_events = bool(company_settings.get("privacy", {}).get("record_proctoring_events", True))
+
+        # If recording proctoring events is disabled, stop storing them
+        if not record_events:
+            integrity_log = []
 
         if not qa_pairs and not terminated:
             return jsonify({"success": False, "error": "No answers provided"}), 400

@@ -115,6 +115,7 @@ export default function InterviewPortal() {
   const [result,    setResult]   = useState(null);
   const [error,     setError]    = useState("");
   const [timeLeft,  setTimeLeft] = useState(120); // 2 min per question
+  const [consentAccepted, setConsentAccepted] = useState(false);
 
   // ── Integrity monitoring state ────────────────────────────────────────────
   const [cameraReady,    setCameraReady]    = useState(false);
@@ -274,7 +275,8 @@ export default function InterviewPortal() {
         qa_pairs: answersRef.current,
         terminated: true,
         termination_reason: reason,
-        integrity_log: integrityLogRef.current
+        integrity_log: integrityLogRef.current,
+        consent_accepted: true
       });
     } catch (err) {
       // Swallow — candidate still sees the Terminated screen either way.
@@ -670,7 +672,11 @@ export default function InterviewPortal() {
     try {
       const res = await axios.post(
         `${API}/pipeline/interview/public/${token}/submit`,
-        { qa_pairs: finalAnswers, integrity_log: integrityLogRef.current }
+        {
+          qa_pairs: finalAnswers,
+          integrity_log: integrityLogRef.current,
+          consent_accepted: true
+        }
       );
       if (res.data.success) {
         setResult(res.data);
@@ -687,6 +693,19 @@ export default function InterviewPortal() {
 
   // ── Start interview ───────────────────────────────────────────────────────
   const startInterview = async () => {
+    if (interview?.consent_required && !consentAccepted) {
+      return;
+    }
+
+    try {
+      await axios.post(`${API}/pipeline/interview/public/${token}/consent`, {
+        consent_accepted: true,
+        consent_text: interview?.consent_text || ""
+      });
+    } catch (err) {
+      console.warn("Consent registration notice:", err);
+    }
+
     interviewStartRef.current = Date.now();
     strikeCountRef.current = 0;
     lastStrikeAtRef.current = 0;
@@ -777,18 +796,32 @@ export default function InterviewPortal() {
   }
 
   if (stage === STAGE.INTRO) {
+    const brandColor = interview?.brand_color || "#2563eb";
     return (
       <Screen>
         <div className="text-center space-y-6 max-w-lg">
-          <div className="w-20 h-20 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto shadow-lg shadow-blue-600/30">
-            <Bot size={40} className="text-white" />
-          </div>
+          {interview?.company_logo ? (
+            <div className="flex justify-center mb-1">
+              <img
+                src={interview.company_logo}
+                alt={interview.company_name || "Company Logo"}
+                className="max-h-16 max-w-[220px] object-contain rounded-lg p-1.5 bg-white/5 border border-white/10"
+              />
+            </div>
+          ) : (
+            <div
+              className="w-20 h-20 rounded-2xl flex items-center justify-center mx-auto shadow-lg"
+              style={{ backgroundColor: brandColor, boxShadow: `0 10px 25px -5px ${brandColor}50` }}
+            >
+              <Bot size={40} className="text-white" />
+            </div>
+          )}
           <div>
             <h1 className="text-3xl font-bold text-white">
               Hi, {interview?.candidate_name}! 👋
             </h1>
             <p className="text-gray-400 mt-2">
-              You're interviewing for <span className="text-blue-400 font-semibold">{interview?.job_title}</span>
+              You're interviewing for <span className="font-semibold" style={{ color: brandColor }}>{interview?.job_title}</span>
             </p>
             <p className="text-gray-500 text-sm mt-1">at {interview?.company_name}</p>
           </div>
@@ -839,9 +872,40 @@ export default function InterviewPortal() {
             </p>
           </div>
 
+          {/* Privacy & Consent Agreement */}
+          <div className="bg-gray-900/80 rounded-2xl p-5 border border-gray-700 text-left space-y-3">
+            <div className="flex items-center gap-2">
+              <ShieldAlert size={16} className="text-indigo-400" />
+              <h3 className="text-white font-semibold text-sm">Privacy & Data Consent</h3>
+            </div>
+            <div className="text-gray-300 text-xs leading-relaxed max-h-32 overflow-y-auto whitespace-pre-wrap bg-black/40 p-3 rounded-lg border border-gray-800 font-sans">
+              {interview?.consent_text || "I consent to the collection and processing of my interview data, voice responses, and automated assessment results for the purpose of evaluating my job application."}
+            </div>
+            <label className="flex items-start gap-3 cursor-pointer pt-1 group">
+              <input
+                type="checkbox"
+                checked={consentAccepted}
+                onChange={(e) => setConsentAccepted(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-gray-600 text-blue-600 focus:ring-blue-500 bg-gray-950 cursor-pointer"
+              />
+              <span className="text-xs text-gray-300 group-hover:text-white transition-colors select-none">
+                I have read and consent to the data collection and processing terms stated above. <span className="text-red-400 font-bold">*</span>
+              </span>
+            </label>
+          </div>
+
           <button
             onClick={startInterview}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-4 rounded-xl transition-all text-lg shadow-lg shadow-blue-600/30 flex items-center justify-center gap-2"
+            disabled={!consentAccepted}
+            style={{
+              backgroundColor: consentAccepted ? brandColor : undefined,
+              boxShadow: consentAccepted ? `0 10px 25px -5px ${brandColor}40` : undefined
+            }}
+            className={`w-full font-semibold py-4 rounded-xl transition-all text-lg flex items-center justify-center gap-2 ${
+              consentAccepted
+                ? "text-white hover:brightness-110 cursor-pointer"
+                : "bg-gray-800 text-gray-500 cursor-not-allowed opacity-60"
+            }`}
           >
             <Mic size={20} />
             Start Interview

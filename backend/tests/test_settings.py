@@ -50,7 +50,7 @@ def test_safety_check():
 
 def test_default_settings_structure():
     """Ensure DEFAULT_SETTINGS contains all required sections with expected structure."""
-    expected_sections = {"hiring", "interview", "email", "ai", "privacy", "integrations"}
+    expected_sections = {"hiring", "interview", "email", "ai", "company", "privacy", "integrations"}
     assert expected_sections == VALID_SECTIONS
     assert expected_sections.issubset(set(DEFAULT_SETTINGS.keys()))
 

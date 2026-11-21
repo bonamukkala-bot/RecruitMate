@@ -55,13 +55,17 @@ def build_email_html(
     footer_note: str = "",
     button_text: str = None,
     button_url: str = None,
-    details_box: list[tuple[str, str]] = None
+    details_box: list[tuple[str, str]] = None,
+    logo_url: str = None,
+    brand_color: str = None
 ) -> str:
     """
     Constructs a styled HTML email layout wrapping the rendered body text.
+    Applies custom brand color and company logo if configured.
     """
     escaped_company = html.escape(company_name or "RecruitMate AI")
     escaped_footer = html.escape(footer_note) if footer_note else f"This email was sent by {escaped_company}. Please do not reply directly."
+    accent_color = brand_color if (brand_color and brand_color.startswith("#")) else "#2563eb"
     
     # Format line breaks in body
     paragraphs = rendered_body.strip().split("\n\n")
@@ -78,13 +82,13 @@ def build_email_html(
         escaped_btn_url = html.escape(button_url)
         cta_html = f"""
         <div style="text-align: center; margin: 28px 0;">
-            <a href="{escaped_btn_url}" style="background-color: #2563eb; color: #ffffff; padding: 14px 28px; border-radius: 8px; text-decoration: none; font-weight: bold; display: inline-block;">
+            <a href="{escaped_btn_url}" style="background-color: {accent_color}; color: #ffffff; padding: 14px 28px; border-radius: 8px; text-decoration: none; font-weight: bold; display: inline-block;">
                 {escaped_btn_text}
             </a>
         </div>
         <p style="color: #6b7280; font-size: 13px; line-height: 1.6; text-align: center;">
             Or copy this link into your browser:<br/>
-            <span style="color: #2563eb; word-break: break-all;">{escaped_btn_url}</span>
+            <span style="color: {accent_color}; word-break: break-all;">{escaped_btn_url}</span>
         </p>
         """
 
@@ -100,11 +104,25 @@ def build_email_html(
         </div>
         """
 
+    header_content = ""
+    if logo_url:
+        escaped_logo = html.escape(logo_url)
+        header_content = f"""
+        <div style="margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid #f3f4f6;">
+            <img src="{escaped_logo}" alt="{escaped_company}" style="max-height: 42px; max-width: 180px; display: block; margin-bottom: 8px;" />
+            <span style="font-size: 16px; font-weight: 700; color: {accent_color};">{escaped_company}</span>
+        </div>
+        """
+    else:
+        header_content = f"""
+        <div style="margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid #f3f4f6;">
+            <span style="font-size: 18px; font-weight: 700; color: {accent_color};">{escaped_company}</span>
+        </div>
+        """
+
     return f"""
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 24px auto; padding: 32px; border: 1px solid #e5e7eb; border-radius: 12px; background-color: #ffffff;">
-        <div style="margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid #f3f4f6;">
-            <span style="font-size: 18px; font-weight: 700; color: #111827;">{escaped_company}</span>
-        </div>
+        {header_content}
         {body_html}
         {details_html}
         {cta_html}

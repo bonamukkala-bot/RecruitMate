@@ -32,5 +32,9 @@ export const candidatesAPI = {
 
   // Needs Review Actions
   reviewApprove: (candidateId) => api.post(`/candidates/detail/${candidateId}/review/approve`),
-  reviewOverride: (candidateId, data = {}) => api.post(`/candidates/detail/${candidateId}/review/override`, data)
+  reviewOverride: (candidateId, data = {}) => api.post(`/candidates/detail/${candidateId}/review/override`, data),
+
+  // Privacy & GDPR Actions
+  exportData: (candidateId) => api.get(`/privacy/candidates/${candidateId}/export`),
+  hardDeleteData: (candidateId) => api.delete(`/candidates/${candidateId}/data`)
 };

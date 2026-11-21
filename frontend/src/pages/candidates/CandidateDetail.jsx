@@ -1,10 +1,10 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
-  ArrowLeft, Star, CheckCircle, XCircle,
+  ArrowLeft, CheckCircle, XCircle,
   Mail, Brain, Calendar, MessageSquare,
   ChevronDown, ChevronUp, Zap, Video, Copy,
-  ShieldAlert, AlertTriangle, Ban
+  ShieldAlert, AlertTriangle, Ban, Download, Trash2
 } from "lucide-react";
 import { candidatesAPI } from "../../api/candidates";
 import { pipelineAPI } from "../../api/pipeline";
@@ -12,6 +12,7 @@ import Button from "../../components/ui/Button";
 import Badge from "../../components/ui/Badge";
 import Modal from "../../components/ui/Modal";
 import LoadingSpinner from "../../components/ui/LoadingSpinner";
+import useRole from "../../hooks/useRole";
 import toast from "react-hot-toast";
 
 // ── Score Ring ────────────────────────────────────────────────────────────────
@@ -323,6 +324,60 @@ export default function CandidateDetail() {
   const [interviewLink, setInterviewLink] = useState(null);
   const [emailSent, setEmailSent] = useState(false);
 
+  const { isAdmin } = useRole();
+  const [exporting, setExporting] = useState(false);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [typedEmail, setTypedEmail] = useState("");
+  const [hardDeleting, setHardDeleting] = useState(false);
+
+  const handleExportData = async () => {
+    setExporting(true);
+    try {
+      const res = await candidatesAPI.exportData(id);
+      if (res.data?.success) {
+        const bundle = res.data.export;
+        const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        const safeName = (candidate?.candidate_name || id).replace(/\s+/g, "_");
+        a.download = `candidate_${safeName}_export.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        toast.success("Privacy data bundle exported");
+      } else {
+        toast.error(res.data?.error || "Export failed");
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Export failed");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleHardDelete = async () => {
+    if (typedEmail.trim().toLowerCase() !== (candidate?.candidate_email || "").trim().toLowerCase()) {
+      toast.error("Typed email does not match candidate email");
+      return;
+    }
+    setHardDeleting(true);
+    try {
+      const res = await candidatesAPI.hardDeleteData(id);
+      if (res.data?.success) {
+        toast.success("Candidate and all associated data permanently deleted");
+        navigate("/candidates");
+      } else {
+        toast.error(res.data?.error || "Failed to delete candidate data");
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Failed to delete candidate data");
+    } finally {
+      setHardDeleting(false);
+    }
+  };
+
   useEffect(() => {
     fetchCandidate();
   }, [id]);
@@ -451,6 +506,30 @@ export default function CandidateDetail() {
           <p className="text-stone-500 text-sm mt-0.5">{candidate.candidate_email}</p>
         </div>
         <Badge status={candidate.status}>{candidate.status === "pending_review" ? "Needs Review" : candidate.status}</Badge>
+
+        {isAdmin && (
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={exporting}
+              onClick={handleExportData}
+              title="Export complete candidate profile and history as JSON"
+            >
+              <Download size={14} className="mr-1.5" />
+              Export JSON
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={() => { setTypedEmail(""); setDeleteModalOpen(true); }}
+              title="Permanently remove candidate and all related records"
+            >
+              <Trash2 size={14} className="mr-1.5" />
+              Delete Data
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Needs Review Alert Banner */}
@@ -760,6 +839,54 @@ export default function CandidateDetail() {
         link={interviewLink}
         emailSent={emailSent}
       />
+
+      {/* Hard Delete Confirmation Modal */}
+      <Modal
+        isOpen={deleteModalOpen}
+        onClose={() => setDeleteModalOpen(false)}
+        title="Permanently Delete Candidate Data"
+      >
+        <div className="space-y-4">
+          <div className="p-3 bg-brick-50 border border-brick-200 rounded-lg text-xs text-brick-700 leading-relaxed">
+            <p className="font-semibold mb-1">Warning: Irreversible action</p>
+            This will permanently erase all candidate records, resume parsing data,
+            interview responses, and pipeline logs. To prevent accidental deletion,
+            please type the candidate's email to confirm.
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-stone-600 mb-1">
+              Type <span className="font-mono font-semibold text-ink-500 select-all">{candidate.candidate_email}</span> to confirm:
+            </label>
+            <input
+              type="text"
+              value={typedEmail}
+              onChange={(e) => setTypedEmail(e.target.value)}
+              placeholder={candidate.candidate_email}
+              className="input w-full font-mono text-sm"
+              autoFocus
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              variant="secondary"
+              onClick={() => setDeleteModalOpen(false)}
+              disabled={hardDeleting}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              disabled={typedEmail.trim().toLowerCase() !== candidate.candidate_email?.toLowerCase() || hardDeleting}
+              loading={hardDeleting}
+              onClick={handleHardDelete}
+            >
+              Permanently Delete
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
