@@ -63,6 +63,8 @@ export default function IntegrationsSettings() {
   const [keyExpiryDays, setKeyExpiryDays] = useState(90);
   const [creatingKey, setCreatingKey] = useState(false);
   const [generatedRawKey, setGeneratedRawKey] = useState(null);
+  const [keyNameError, setKeyNameError] = useState("");
+  const [keyScopeError, setKeyScopeError] = useState("");
 
   // ── Google Calendar State ──────────────────────────────────────────────────
   const [googleStatus, setGoogleStatus] = useState({ enabled: false, connected: false, calendar_email: "" });
@@ -269,19 +271,28 @@ export default function IntegrationsSettings() {
   // ── API Key Handlers ───────────────────────────────────────────────────────
   const handleCreateApiKey = async (e) => {
     e.preventDefault();
-    if (!keyName.trim()) {
-      toast.error("API Key name is required");
-      return;
+    setKeyNameError("");
+    setKeyScopeError("");
+
+    const trimmedName = keyName.trim();
+    let hasError = false;
+    if (!trimmedName) {
+      setKeyNameError("API key name is required");
+      hasError = true;
     }
     if (keyScopes.length === 0) {
-      toast.error("Select at least one permission scope");
+      setKeyScopeError("At least one permission scope is required");
+      hasError = true;
+    }
+    if (hasError) {
+      toast.error(trimmedName ? "Select at least one permission scope" : "API key name is required");
       return;
     }
 
     setCreatingKey(true);
     try {
       const res = await settingsAPI.createApiKey({
-        name: keyName,
+        name: trimmedName,
         scopes: keyScopes,
         expires_in_days: keyExpiryDays
       });
@@ -289,10 +300,14 @@ export default function IntegrationsSettings() {
         setGeneratedRawKey(res.data.key);
         fetchApiKeys();
         setKeyName("");
-        toast.success("API Key generated");
+        setKeyNameError("");
+        setKeyScopeError("");
+        toast.success(res.data.message || "API Key generated");
+      } else {
+        toast.error(res.data?.error || "Failed to generate API Key");
       }
     } catch (err) {
-      toast.error(err.response?.data?.error || "Failed to generate API Key");
+      toast.error(err.response?.data?.error || err.message || "Failed to generate API Key");
     } finally {
       setCreatingKey(false);
     }
@@ -302,25 +317,28 @@ export default function IntegrationsSettings() {
     try {
       const res = await settingsAPI.revokeApiKey(id);
       if (res.data?.success) {
-        toast.success("API Key revoked");
+        toast.success(res.data.message || "API Key revoked");
         fetchApiKeys();
+      } else {
+        toast.error(res.data?.error || "Failed to revoke API key");
       }
-    } catch {
-      toast.error("Failed to revoke API key");
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Failed to revoke API key");
     }
   };
 
   return (
-    <form onSubmit={handleSave}>
-      <SettingsSection
-        title="Integrations & Developer APIs"
-        description="Connect RecruitMate to Slack for real-time notifications, configure signed outgoing webhooks, manage external API keys, and set up calendar sync."
-        isDirty={isDirty}
-        onSave={handleSave}
-        onReset={handleReset}
-        saving={saving}
-        loading={loading}
-      >
+    <>
+      <form onSubmit={handleSave}>
+        <SettingsSection
+          title="Integrations & Developer APIs"
+          description="Connect RecruitMate to Slack for real-time notifications, configure signed outgoing webhooks, manage external API keys, and set up calendar sync."
+          isDirty={isDirty}
+          onSave={handleSave}
+          onReset={handleReset}
+          saving={saving}
+          loading={loading}
+        >
         <div className="space-y-10 max-w-3xl">
 
           {/* 1. Slack Integration */}
@@ -511,7 +529,15 @@ export default function IntegrationsSettings() {
                   type="button"
                   variant="primary"
                   size="sm"
-                  onClick={() => { setApiKeyModalOpen(true); setGeneratedRawKey(null); }}
+                  onClick={() => {
+                    setKeyName("");
+                    setKeyScopes(["read:candidates", "write:jobs"]);
+                    setKeyExpiryDays(90);
+                    setKeyNameError("");
+                    setKeyScopeError("");
+                    setGeneratedRawKey(null);
+                    setApiKeyModalOpen(true);
+                  }}
                 >
                   <Plus size={14} className="mr-1.5" />
                   Generate Key
@@ -549,6 +575,9 @@ export default function IntegrationsSettings() {
                       </div>
                       <div className="flex flex-wrap items-center gap-2 text-[11px] text-stone-500">
                         <span>Scopes: {key.scopes.join(", ")}</span>
+                        {key.created_at && (
+                          <span>• Created: {new Date(key.created_at).toLocaleDateString()}</span>
+                        )}
                         {key.last_used_at && <span>• Last used: {new Date(key.last_used_at).toLocaleDateString()}</span>}
                         {key.expires_at && <span>• Expires: {new Date(key.expires_at).toLocaleDateString()}</span>}
                       </div>
@@ -631,6 +660,7 @@ export default function IntegrationsSettings() {
 
         </div>
       </SettingsSection>
+    </form>
 
       {/* ── Modal: Register Webhook ────────────────────────────────────────── */}
       <Modal
@@ -716,7 +746,12 @@ export default function IntegrationsSettings() {
       {/* ── Modal: Generate API Key ────────────────────────────────────────── */}
       <Modal
         isOpen={apiKeyModalOpen}
-        onClose={() => setApiKeyModalOpen(false)}
+        onClose={() => {
+          setApiKeyModalOpen(false);
+          setGeneratedRawKey(null);
+          setKeyNameError("");
+          setKeyScopeError("");
+        }}
         title={generatedRawKey ? "Your New API Key" : "Generate External API Key"}
       >
         {generatedRawKey ? (
@@ -746,7 +781,14 @@ export default function IntegrationsSettings() {
               </Button>
             </div>
             <div className="flex justify-end pt-2">
-              <Button type="button" variant="primary" onClick={() => setApiKeyModalOpen(false)}>
+              <Button
+                type="button"
+                variant="primary"
+                onClick={() => {
+                  setApiKeyModalOpen(false);
+                  setGeneratedRawKey(null);
+                }}
+              >
                 Done
               </Button>
             </div>
@@ -757,7 +799,11 @@ export default function IntegrationsSettings() {
               label="Key Identifier / Name"
               placeholder="e.g. Careers Page Intake"
               value={keyName}
-              onChange={(e) => setKeyName(e.target.value)}
+              onChange={(e) => {
+                setKeyName(e.target.value);
+                if (keyNameError) setKeyNameError("");
+              }}
+              error={keyNameError}
               required
             />
             <div className="space-y-2">
@@ -768,6 +814,7 @@ export default function IntegrationsSettings() {
                     type="checkbox"
                     checked={keyScopes.includes("read:candidates")}
                     onChange={(e) => {
+                      if (keyScopeError) setKeyScopeError("");
                       if (e.target.checked) setKeyScopes([...keyScopes, "read:candidates"]);
                       else setKeyScopes(keyScopes.filter((s) => s !== "read:candidates"));
                     }}
@@ -780,6 +827,7 @@ export default function IntegrationsSettings() {
                     type="checkbox"
                     checked={keyScopes.includes("write:jobs")}
                     onChange={(e) => {
+                      if (keyScopeError) setKeyScopeError("");
                       if (e.target.checked) setKeyScopes([...keyScopes, "write:jobs"]);
                       else setKeyScopes(keyScopes.filter((s) => s !== "write:jobs"));
                     }}
@@ -788,6 +836,9 @@ export default function IntegrationsSettings() {
                   <span><code>write:jobs</code> — List open positions</span>
                 </label>
               </div>
+              {keyScopeError && (
+                <p className="text-red-500 text-xs font-medium">{keyScopeError}</p>
+              )}
             </div>
             <div>
               <label className="text-xs font-semibold text-stone-700 block mb-1">Expiration</label>
@@ -803,7 +854,15 @@ export default function IntegrationsSettings() {
               </select>
             </div>
             <div className="flex justify-end gap-2 pt-2">
-              <Button type="button" variant="secondary" onClick={() => setApiKeyModalOpen(false)}>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  setApiKeyModalOpen(false);
+                  setKeyNameError("");
+                  setKeyScopeError("");
+                }}
+              >
                 Cancel
               </Button>
               <Button type="submit" variant="primary" loading={creatingKey}>
@@ -853,6 +912,6 @@ export default function IntegrationsSettings() {
           </div>
         </div>
       </Modal>
-    </form>
+    </>
   );
 }

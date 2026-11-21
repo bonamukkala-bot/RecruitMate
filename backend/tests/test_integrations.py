@@ -494,3 +494,90 @@ def test_production_db_regression_no_500(client):
 
         reset_res = client.post("/api/settings/integrations/reset", headers=headers)
         assert reset_res.status_code == 200, f"Expected 200 on prod DB, got {reset_res.status_code}: {reset_res.data}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 8. API Key Creation & Validation Regression Test
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_api_key_creation_validation_and_lifecycle(client):
+    headers_owner = get_auth_headers("owner")
+    headers_recruiter = get_auth_headers("recruiter")
+
+    # 1. Non-admin (recruiter) role cannot create key
+    res_rec = client.post("/api/integrations/api-keys", headers=headers_recruiter, json={
+        "name": "Unauthorized Key",
+        "scopes": ["write:jobs"]
+    })
+    assert res_rec.status_code == 403
+    assert "Permission denied" in res_rec.get_json()["error"]
+
+    # 2. Empty name validation
+    res_empty_name = client.post("/api/integrations/api-keys", headers=headers_owner, json={
+        "name": "   ",
+        "scopes": ["write:jobs"]
+    })
+    assert res_empty_name.status_code == 400
+    assert "API key name is required" in res_empty_name.get_json()["error"]
+
+    # 3. Empty scopes validation
+    res_empty_scopes = client.post("/api/integrations/api-keys", headers=headers_owner, json={
+        "name": "Valid Name",
+        "scopes": []
+    })
+    assert res_empty_scopes.status_code == 400
+    assert "At least one scope" in res_empty_scopes.get_json()["error"]
+
+    # 4. Invalid scopes validation
+    res_inv_scopes = client.post("/api/integrations/api-keys", headers=headers_owner, json={
+        "name": "Valid Name",
+        "scopes": ["invalid:scope", "write:jobs"]
+    })
+    assert res_inv_scopes.status_code == 400
+    assert "Invalid scopes" in res_inv_scopes.get_json()["error"]
+
+    # 5. Successful creation with custom expiry
+    res_create = client.post("/api/integrations/api-keys", headers=headers_owner, json={
+        "name": "Careers Portal Ingestion",
+        "scopes": ["read:candidates", "write:jobs"],
+        "expires_in_days": 90
+    })
+    assert res_create.status_code == 201
+    body = res_create.get_json()
+    assert body["success"] is True
+    full_key = body["key"]
+    assert full_key.startswith("rm_live_")
+    key_info = body["api_key"]
+    key_id = key_info["id"]
+    assert key_info["name"] == "Careers Portal Ingestion"
+    assert key_info["key_prefix"].startswith("rm_live_")
+    assert key_info["scopes"] == ["read:candidates", "write:jobs"]
+    assert key_info["expires_at"] is not None
+
+    # Verify only prefix and hash are stored in DB, never full raw key
+    db_doc = api_keys_collection.find_one({"_id": ObjectId(key_id)})
+    assert db_doc is not None
+    assert db_doc["key_prefix"] == key_info["key_prefix"]
+    assert db_doc["key_hash"] is not None
+    assert "key" not in db_doc
+    assert full_key not in db_doc.values()
+
+    # 6. Verify key works on /api/v1/jobs
+    v1_headers = {"Authorization": f"Bearer {full_key}"}
+    jobs_res = client.get("/api/v1/jobs", headers=v1_headers)
+    assert jobs_res.status_code == 200
+    assert jobs_res.get_json()["success"] is True
+
+    # 7. Verify key is refused on /api/settings (401)
+    settings_res = client.get("/api/settings", headers=v1_headers)
+    assert settings_res.status_code == 401
+
+    # 8. Revoke key
+    del_res = client.delete(f"/api/integrations/api-keys/{key_id}", headers=headers_owner)
+    assert del_res.status_code == 200
+    assert del_res.get_json()["success"] is True
+
+    # 9. Key is refused on /api/v1/jobs after revocation (401)
+    revoked_res = client.get("/api/v1/jobs", headers=v1_headers)
+    assert revoked_res.status_code == 401
+    assert "revoked" in revoked_res.get_json()["error"]

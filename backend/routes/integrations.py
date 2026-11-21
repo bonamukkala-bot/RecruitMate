@@ -262,7 +262,11 @@ def create_api_key_endpoint():
     company_id = company["company_id"]
     body = request.get_json(silent=True) or {}
 
-    name = (body.get("name") or "API Key").strip()
+    raw_name = body.get("name")
+    if not raw_name or not str(raw_name).strip():
+        return jsonify({"success": False, "error": "API key name is required"}), 400
+
+    name = str(raw_name).strip()
     scopes = body.get("scopes", ["read:candidates", "write:jobs"])
 
     if not isinstance(scopes, list) or not scopes:
