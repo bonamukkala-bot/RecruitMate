@@ -28,11 +28,13 @@ jobs_collection       = db["jobs"]
 candidates_collection = db["candidates"]
 pipeline_collection   = db["pipeline"]
 otp_collection        = db["otps"]
+company_settings_collection = db["company_settings"]
 
 # ── Indexes ───────────────────────────────────────────────────────────────────
 def create_indexes():
     try:
         companies_collection.create_index([("email", ASCENDING)], unique=True)
+        company_settings_collection.create_index([("company_id", ASCENDING)], unique=True)
         jobs_collection.create_index([("company_id", ASCENDING)])
         candidates_collection.create_index([("company_id", ASCENDING)])
         candidates_collection.create_index([("job_id", ASCENDING)])

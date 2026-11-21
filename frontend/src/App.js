@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "react-hot-toast";
 import { AuthProvider, useAuth } from "./context/AuthContext";
+import { SettingsProvider } from "./context/SettingsContext";
 
 import DashboardLayout from "./components/layout/DashboardLayout";
 import Login from "./pages/auth/Login";
@@ -43,7 +44,8 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Toaster
+        <SettingsProvider>
+          <Toaster
           position="top-right"
           toastOptions={{
             style: {
@@ -87,6 +89,7 @@ export default function App() {
           {/* Fallback */}
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
+        </SettingsProvider>
       </AuthProvider>
     </BrowserRouter>
   );
