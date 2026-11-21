@@ -84,6 +84,7 @@ export default function App() {
             <Route path="analytics"          element={<Analytics />} />
             <Route path="heatmap"            element={<Heatmap />} />
             <Route path="settings"           element={<Settings />} />
+            <Route path="settings/:tab"      element={<Settings />} />
           </Route>
 
           {/* Fallback */}

@@ -243,26 +243,44 @@ def pipeline_schedule(candidate_id):
 
         eval_data = candidate.get("evaluation") or {}
         if not eval_data or eval_data.get("overall_score") is None:
-            return jsonify({"success": False, "error": "Evaluate answers before scheduling the next round"}), 400
+            return jsonify({"success": False, "error": "Evaluate answers before scheduling"}), 400
 
         role_level = body.get("role_level") or "mid"
+
+        from utils.settings import get_settings
+        company_settings = get_settings(company["company_id"])
+        hiring_settings  = company_settings.get("hiring", {})
+        thresholds       = hiring_settings.get("thresholds")
+        approval_mode    = hiring_settings.get("approval_mode", {})
+        auto_reject_requires_approval = bool(approval_mode.get("auto_reject_requires_approval", False))
 
         result = schedule_next_step(
             candidate_data=candidate,
             job_data=job,
             eval_data=eval_data,
             company_name=company["company_name"],
-            role_level=role_level
+            role_level=role_level,
+            thresholds=thresholds,
+            approval_mode=approval_mode
         )
 
         if result.get("success"):
             schedule_data = result.get("data") or {}
             decision = schedule_data.get("decision", "advance")
             update_payload = {
-                "schedule"  : schedule_data,
-                "updated_at": datetime.now(timezone.utc)
+                "schedule"            : schedule_data,
+                "recommended_decision": decision,
+                "updated_at"          : datetime.now(timezone.utc)
             }
-            if decision != "reject":
+            if decision == "reject":
+                if auto_reject_requires_approval:
+                    update_payload["status"] = "pending_review"
+                    update_payload["review_reason"] = (
+                        f"Evaluation score {eval_data.get('overall_score', 0)} did not meet threshold for {role_level} role"
+                    )
+                else:
+                    update_payload["status"] = "rejected"
+            else:
                 update_payload["status"] = decision
 
             candidates_collection.update_one(
@@ -272,6 +290,9 @@ def pipeline_schedule(candidate_id):
             log_pipeline(company["company_id"], candidate_id,
                         str(job["_id"]), "scheduler",
                         "success", schedule_data)
+            result["recommended_decision"] = decision
+            if "data" in result:
+                result["data"]["recommended_decision"] = decision
 
         return jsonify(result), 200 if result.get("success") else 500
 

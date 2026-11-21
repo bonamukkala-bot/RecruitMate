@@ -20,6 +20,21 @@ function CreateJobModal({ isOpen, onClose, onCreated }) {
   const [loading,   setLoading]   = useState(false);
   const [generating, setGenerating] = useState(false);
 
+  // Scoring weights configuration
+  const [useCompanyWeights, setUseCompanyWeights] = useState(true);
+  const [scoringWeights, setScoringWeights] = useState({
+    skills: 40,
+    experience: 30,
+    education: 15,
+    projects: 15
+  });
+
+  const totalWeight =
+    (scoringWeights.skills || 0) +
+    (scoringWeights.experience || 0) +
+    (scoringWeights.education || 0) +
+    (scoringWeights.projects || 0);
+
   const handleGenerate = async () => {
     if (!brief.trim()) {
       toast.error("Please enter a brief description");
@@ -41,24 +56,38 @@ function CreateJobModal({ isOpen, onClose, onCreated }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!useCompanyWeights && totalWeight !== 100) {
+      toast.error(`Scoring weights must sum to 100% (currently ${totalWeight}%)`);
+      return;
+    }
+
     setLoading(true);
     try {
       let res;
+      const jobOptions = {
+        use_company_weights: useCompanyWeights,
+        scoring_weights: useCompanyWeights ? undefined : scoringWeights
+      };
+
       if (inputMode === "file" && file) {
-        res = await jobsAPI.createFromFile(file);
+        res = await jobsAPI.createFromFile(file, jobOptions);
       } else {
         if (!jdText.trim()) {
           toast.error("Please enter or generate a job description");
           setLoading(false);
           return;
         }
-        res = await jobsAPI.create({ jd_text: jdText });
+        res = await jobsAPI.create({
+          jd_text: jdText,
+          ...jobOptions
+        });
       }
       if (res.data.success) {
         toast.success("Job created successfully!");
         setJdText("");
         setBrief("");
         setFile(null);
+        setUseCompanyWeights(true);
         onCreated(res.data.job);
         onClose();
       }
@@ -217,6 +246,67 @@ function CreateJobModal({ isOpen, onClose, onCreated }) {
             />
           </div>
         )}
+
+        {/* Scoring weights override */}
+        <div className="pt-3 border-t border-stone-200 space-y-3">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-semibold text-ink-500 uppercase tracking-wider">
+              Resume Scoring Rubric
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer text-xs text-stone-600 font-medium">
+              <input
+                type="checkbox"
+                checked={useCompanyWeights}
+                onChange={(e) => setUseCompanyWeights(e.target.checked)}
+                className="w-3.5 h-3.5 rounded border-stone-300 text-ledger-600 focus:ring-ledger-200 cursor-pointer"
+              />
+              <span>Use company defaults</span>
+            </label>
+          </div>
+
+          {!useCompanyWeights && (
+            <div className="p-3 bg-stone-50 rounded-xl border border-stone-200 space-y-3 animate-fade-in">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-stone-500">Customize rubric weights for this job:</span>
+                <span
+                  className={`font-semibold px-2 py-0.5 rounded-full ${
+                    totalWeight === 100
+                      ? "bg-verified-50 text-verified-700"
+                      : "bg-brick-50 text-brick-700"
+                  }`}
+                >
+                  Total: {totalWeight}% / 100%
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {[
+                  { key: "skills", label: "Skills" },
+                  { key: "experience", label: "Experience" },
+                  { key: "education", label: "Education" },
+                  { key: "projects", label: "Projects" }
+                ].map(({ key, label }) => (
+                  <div key={key}>
+                    <label className="text-[11px] font-medium text-stone-500 block mb-0.5">
+                      {label} (%)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={scoringWeights[key]}
+                      onChange={(e) => {
+                        const val = Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 0));
+                        setScoringWeights((prev) => ({ ...prev, [key]: val }));
+                      }}
+                      className="input py-1 px-2 text-xs font-mono font-bold"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
 
         {loading && (
           <div className="flex items-center gap-2 text-ledger-600 text-sm">

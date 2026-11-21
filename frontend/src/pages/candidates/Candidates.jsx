@@ -9,7 +9,7 @@ import Input from "../../components/ui/Input";
 import LoadingSpinner from "../../components/ui/LoadingSpinner";
 import toast from "react-hot-toast";
 
-const STATUS_FILTERS = ["all", "screened", "shortlisted", "invited", "hired", "rejected"];
+const STATUS_FILTERS = ["all", "pending_review", "screened", "shortlisted", "invited", "hired", "rejected"];
 const MAX_COMPARE = 3;
 
 export default function Candidates() {
@@ -20,6 +20,32 @@ export default function Candidates() {
   const [status,     setStatus]     = useState("all");
   const [selected,   setSelected]   = useState([]);
   const navigate                    = useNavigate();
+
+  const handleReviewApprove = async (e, candidateId) => {
+    e.stopPropagation();
+    try {
+      const res = await candidatesAPI.reviewApprove(candidateId);
+      if (res.data.success) {
+        toast.success("Candidate rejection approved");
+        fetchCandidates();
+      }
+    } catch {
+      toast.error("Failed to approve rejection");
+    }
+  };
+
+  const handleReviewOverride = async (e, candidateId) => {
+    e.stopPropagation();
+    try {
+      const res = await candidatesAPI.reviewOverride(candidateId, { status: "shortlisted" });
+      if (res.data.success) {
+        toast.success("Candidate rejection overridden (shortlisted)");
+        fetchCandidates();
+      }
+    } catch {
+      toast.error("Failed to override rejection");
+    }
+  };
 
   // ── Advanced filters (skill / score range / date range) ────────────────────
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -192,7 +218,7 @@ export default function Candidates() {
                   : "bg-white text-stone-500 hover:text-ink-500 border border-stone-200"
               }`}
             >
-              {s.charAt(0).toUpperCase() + s.slice(1)}
+              {s === "pending_review" ? "Needs Review" : s.charAt(0).toUpperCase() + s.slice(1)}
             </button>
           ))}
         </div>
@@ -350,7 +376,29 @@ export default function Candidates() {
                     </div>
                   </td>
                   <td className="px-6 py-4 text-center">
-                    <Badge status={c.status}>{c.status}</Badge>
+                    {c.status === "pending_review" ? (
+                      <div className="flex flex-col items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                        <Badge status="pending_review">Needs Review</Badge>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={(e) => handleReviewApprove(e, c._id)}
+                            title="Approve Rejection"
+                            className="px-2 py-0.5 rounded text-[11px] font-semibold bg-brick-50 text-brick-700 hover:bg-brick-100 border border-brick-200 transition-all"
+                          >
+                            Approve
+                          </button>
+                          <button
+                            onClick={(e) => handleReviewOverride(e, c._id)}
+                            title="Override Rejection (Shortlist)"
+                            className="px-2 py-0.5 rounded text-[11px] font-semibold bg-verified-50 text-verified-700 hover:bg-verified-100 border border-verified-200 transition-all"
+                          >
+                            Override
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <Badge status={c.status}>{c.status}</Badge>
+                    )}
                   </td>
                 </tr>
               ))}

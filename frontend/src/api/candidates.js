@@ -28,5 +28,9 @@ export const candidatesAPI = {
   exportCSV: (params) => api.get("/candidates/export", { params, responseType: "blob" }),
 
   // Candidate Comparison Tool — pass 2-3 candidate ids
-  compare: (candidateIds) => api.post("/candidates/compare", { candidate_ids: candidateIds })
+  compare: (candidateIds) => api.post("/candidates/compare", { candidate_ids: candidateIds }),
+
+  // Needs Review Actions
+  reviewApprove: (candidateId) => api.post(`/candidates/detail/${candidateId}/review/approve`),
+  reviewOverride: (candidateId, data = {}) => api.post(`/candidates/detail/${candidateId}/review/override`, data)
 };

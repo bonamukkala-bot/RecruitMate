@@ -10,16 +10,17 @@ const variants = {
 };
 
 const statusMap = {
-  screened   : "blue",
-  shortlisted: "green",
-  invited    : "purple",
-  hired      : "green",
-  rejected   : "red",
-  active     : "green",
-  closed     : "gray",
-  advance    : "green",
-  reject     : "red",
-  pending    : "yellow"
+  screened      : "blue",
+  shortlisted   : "green",
+  invited       : "purple",
+  hired         : "green",
+  rejected      : "red",
+  pending_review: "yellow",
+  active        : "green",
+  closed        : "gray",
+  advance       : "green",
+  reject        : "red",
+  pending       : "yellow"
 };
 
 export default function Badge({ children, variant, status, className }) {

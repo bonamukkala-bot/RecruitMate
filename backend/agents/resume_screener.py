@@ -26,7 +26,7 @@ _TEMPLATE = """Compare the resume below against the job requirements and score t
 JOB TITLE: {job_title}
 REQUIRED SKILLS: {required_skills}
 EXPERIENCE REQUIRED: {experience_required}
-
+{weights_section}
 RESUME:
 {resume_text}
 
@@ -66,14 +66,25 @@ def _clean(text: str) -> str:
     return cleaned.strip()
 
 # ── Main public function ─────────────────────────────────────────────────────
-def screen_resume(resume_text: str, job_data: dict) -> dict:
+def screen_resume(resume_text: str, job_data: dict, scoring_weights: dict = None) -> dict:
     """
-    Input  : resume_text (str), job_data (dict from parse_jd)
+    Input  : resume_text (str), job_data (dict from parse_jd),
+             optional scoring_weights (dict with skills, experience, education, projects)
     Output : {"success": True,  "data": {...}}
            | {"success": False, "error": "...", "raw_response": "..."}
     """
     raw = ""
     try:
+        weights_section = ""
+        if scoring_weights and isinstance(scoring_weights, dict):
+            weights_section = (
+                f"SCORING WEIGHTS TO FACTOR IN:\n"
+                f"- Skills match: {scoring_weights.get('skills', 40)}%\n"
+                f"- Experience match: {scoring_weights.get('experience', 30)}%\n"
+                f"- Education match: {scoring_weights.get('education', 15)}%\n"
+                f"- Projects: {scoring_weights.get('projects', 15)}%\n"
+            )
+
         resp = _llm.invoke(
             [
                 {"role": "system", "content": _SYSTEM},
@@ -81,6 +92,7 @@ def screen_resume(resume_text: str, job_data: dict) -> dict:
                     job_title=job_data.get("job_title", ""),
                     required_skills=", ".join(job_data.get("required_skills", [])),
                     experience_required=job_data.get("experience_required", ""),
+                    weights_section=weights_section,
                     resume_text=resume_text
                 )}
             ]

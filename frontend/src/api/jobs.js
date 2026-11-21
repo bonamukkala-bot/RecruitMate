@@ -8,9 +8,15 @@ export const jobsAPI = {
   create: (data) => api.post("/jobs/", data),
 
   // File-based JD creation (PDF or Word)
-  createFromFile: (file) => {
+  createFromFile: (file, options = {}) => {
     const formData = new FormData();
     formData.append("jd_file", file);
+    if (options.use_company_weights !== undefined) {
+      formData.append("use_company_weights", options.use_company_weights);
+    }
+    if (options.scoring_weights) {
+      formData.append("scoring_weights", JSON.stringify(options.scoring_weights));
+    }
     return api.post("/jobs/", formData, {
       headers: { "Content-Type": "multipart/form-data" }
     });

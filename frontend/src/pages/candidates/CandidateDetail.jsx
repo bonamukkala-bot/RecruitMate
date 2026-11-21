@@ -358,18 +358,47 @@ export default function CandidateDetail() {
     try {
       const res = await pipelineAPI.schedule(id, { role_level: "junior" });
       if (res.data.success) {
-        const scheduleData = res.data.data;
-        if (scheduleData?.decision === "reject") {
+        const scheduleData = res.data.data || {};
+        const decision = scheduleData.recommended_decision || scheduleData.decision;
+        if (decision === "reject") {
           toast("Recommended: Reject", { icon: "⚠️" });
         } else {
-          toast.success(`Scheduled: ${scheduleData.next_step}`);
+          toast.success(`Recommended: ${scheduleData.next_step || decision}`);
         }
-        setCandidate(prev => ({ ...prev, schedule: scheduleData }));
+        setCandidate(prev => ({
+          ...prev,
+          schedule: scheduleData,
+          status: scheduleData.status || (decision !== "reject" ? decision : prev.status)
+        }));
       }
     } catch (err) {
       toast.error(err.response?.data?.error || "Scheduling failed");
     } finally {
       setScheduling(false);
+    }
+  };
+
+  const handleReviewApprove = async () => {
+    try {
+      const res = await candidatesAPI.reviewApprove(id);
+      if (res.data.success) {
+        setCandidate(prev => ({ ...prev, status: "rejected" }));
+        toast.success("Rejection approved");
+      }
+    } catch {
+      toast.error("Failed to approve rejection");
+    }
+  };
+
+  const handleReviewOverride = async (targetStatus = "shortlisted") => {
+    try {
+      const res = await candidatesAPI.reviewOverride(id, { status: targetStatus });
+      if (res.data.success) {
+        setCandidate(prev => ({ ...prev, status: targetStatus }));
+        toast.success(`Rejection overridden (${targetStatus})`);
+      }
+    } catch {
+      toast.error("Failed to override rejection");
     }
   };
 
@@ -421,8 +450,40 @@ export default function CandidateDetail() {
           <h1 className="text-2xl font-bold text-ink-500 font-display">{candidate.candidate_name}</h1>
           <p className="text-stone-500 text-sm mt-0.5">{candidate.candidate_email}</p>
         </div>
-        <Badge status={candidate.status}>{candidate.status}</Badge>
+        <Badge status={candidate.status}>{candidate.status === "pending_review" ? "Needs Review" : candidate.status}</Badge>
       </div>
+
+      {/* Needs Review Alert Banner */}
+      {candidate.status === "pending_review" && (
+        <div className="card border-gold-300 bg-gold-50/70 p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <AlertTriangle size={18} className="text-gold-600" />
+              <p className="font-bold text-ink-500 font-display">Needs Review — Rejection Pending Approval</p>
+            </div>
+            <p className="text-xs text-stone-600">
+              {candidate.review_reason || "This candidate did not meet the required threshold and is recommended for rejection."}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <Button
+              variant="danger"
+              className="text-xs py-2 px-3.5"
+              onClick={handleReviewApprove}
+            >
+              Approve Rejection
+            </Button>
+            <Button
+              variant="primary"
+              className="text-xs py-2 px-3.5"
+              onClick={() => handleReviewOverride("shortlisted")}
+            >
+              Override (Shortlist)
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Top cards */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

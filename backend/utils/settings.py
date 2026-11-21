@@ -168,6 +168,8 @@ def validate_section(section: str, data: dict) -> tuple[bool, str | dict]:
             t = thresholds.get(role)
             if not isinstance(t, dict):
                 return False, f"thresholds.{role} must be an object"
+            if "advance_score" not in t or t.get("advance_score") is None:
+                t["advance_score"] = t.get("l2_score", 70)
             for k in ["advance_score", "l2_score", "hr_score"]:
                 val = t.get(k)
                 if not isinstance(val, int) or val < 0 or val > 100:

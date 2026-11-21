@@ -1,33 +1,32 @@
 import { useState, useEffect } from "react";
-import {
-  ShieldCheck, ShieldOff, Briefcase, Mic, Mail,
-  Bot, Users, Building2, Lock, Webhook, Activity
-} from "lucide-react";
+import { useParams, useNavigate } from "react-router-dom";
+import { ShieldCheck, ShieldOff } from "lucide-react";
 import { authAPI } from "../../api/auth";
-import { useSettings } from "../../context/SettingsContext";
+import { ENABLED_TABS, SETTINGS_TABS } from "../../config/settings";
 import SettingsSection from "../../components/settings/SettingsSection";
+import HiringSettings from "../../components/settings/HiringSettings";
 import Input from "../../components/ui/Input";
 import Button from "../../components/ui/Button";
 import LoadingSpinner from "../../components/ui/LoadingSpinner";
 import toast from "react-hot-toast";
 import clsx from "clsx";
 
-const TABS = [
-  { id: "security",     label: "Security",     icon: ShieldCheck, phase: null,      badge: "Active",      description: "Two-factor authentication & account protection" },
-  { id: "hiring",       label: "Hiring Rules", icon: Briefcase,   phase: "Phase 1", badge: "Coming Soon", description: "Score thresholds, weights & approval workflows" },
-  { id: "interview",    label: "Interview",    icon: Mic,         phase: "Phase 2", badge: "Coming Soon", description: "Question quotas, difficulty & proctoring integrity" },
-  { id: "email",        label: "Email",        icon: Mail,        phase: "Phase 3", badge: "Coming Soon", description: "Sender profile, templates & automated alerts" },
-  { id: "ai",           label: "AI Models",    icon: Bot,         phase: "Phase 4", badge: "Coming Soon", description: "Groq model selection, tone & temperature tuning" },
-  { id: "usage",        label: "AI Usage",     icon: Activity,    phase: "Phase 4", badge: "Coming Soon", description: "Token usage, cost estimates & rate tracking" },
-  { id: "team",         label: "Team & Roles", icon: Users,       phase: "Phase 5", badge: "Coming Soon", description: "Team invitations, roles & access permissions" },
-  { id: "company",      label: "Company",      icon: Building2,   phase: "Phase 6", badge: "Coming Soon", description: "Public employer branding, logo & candidate theme" },
-  { id: "privacy",      label: "Privacy",      icon: Lock,        phase: "Phase 6", badge: "Coming Soon", description: "Data retention windows & interview consent" },
-  { id: "integrations", label: "Integrations", icon: Webhook,     phase: "Phase 7", badge: "Coming Soon", description: "Slack notifications, webhooks & calendar sync" },
-];
-
 export default function Settings() {
-  const [activeTab, setActiveTab] = useState("security");
-  const { settings } = useSettings();
+  const { tab } = useParams();
+  const navigate = useNavigate();
+
+  const firstEnabledTab = ENABLED_TABS[0] || "security";
+  const activeTab = ENABLED_TABS.includes(tab) ? tab : firstEnabledTab;
+
+  // Sync URL with valid enabled tab
+  useEffect(() => {
+    if (!tab || !ENABLED_TABS.includes(tab)) {
+      navigate(`/settings/${firstEnabledTab}`, { replace: true });
+    }
+  }, [tab, firstEnabledTab, navigate]);
+
+  // Only render tabs that are listed in ENABLED_TABS
+  const visibleTabs = SETTINGS_TABS.filter((t) => ENABLED_TABS.includes(t.id));
 
   // ── 2FA Security State ─────────────────────────────────────────────────────
   const [qrCode, setQrCode]               = useState(null);
@@ -110,7 +109,7 @@ export default function Settings() {
     }
   };
 
-  const currentTabObj = TABS.find((t) => t.id === activeTab) || TABS[0];
+  const currentTabObj = SETTINGS_TABS.find((t) => t.id === activeTab) || SETTINGS_TABS[0];
 
   return (
     <div className="max-w-7xl mx-auto space-y-6 animate-fade-in">
@@ -118,54 +117,48 @@ export default function Settings() {
       <div>
         <h1 className="text-2xl font-bold text-ink-500 font-display">Company Settings</h1>
         <p className="text-stone-500 text-sm mt-1">
-          Manage your organization rules, security protocols, AI configurations, and interview settings.
+          Manage your organization's rules, security and AI settings.
         </p>
       </div>
 
-      {/* Main Tabbed Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
-        {/* Left Column / Mobile Header: Tab Navigation */}
-        <div className="bg-white rounded-2xl border border-stone-200 shadow-card p-3 lg:col-span-1">
-          <p className="text-xs font-semibold uppercase tracking-wider text-stone-400 px-3 py-2 hidden lg:block">
+      {/* Main Layout: Stack on <768px, 4-col grid on >=768px */}
+      <div className="flex flex-col md:grid md:grid-cols-4 gap-6 items-start">
+        {/* Menu: Horizontal scroll on <768px, vertical sidebar on >=768px */}
+        <div className="w-full bg-white rounded-2xl border border-stone-200 shadow-card p-2 md:p-3 md:col-span-1">
+          <p className="text-xs font-semibold uppercase tracking-wider text-stone-400 px-3 py-2 hidden md:block">
             Settings Menu
           </p>
 
-          <nav className="flex lg:flex-col overflow-x-auto lg:overflow-visible gap-1 pb-1 lg:pb-0 scrollbar-none">
-            {TABS.map((tab) => {
-              const Icon = tab.icon;
-              const isActive = activeTab === tab.id;
+          <nav className="flex flex-row md:flex-col gap-1 overflow-x-auto md:overflow-visible pb-1 md:pb-0 scrollbar-none">
+            {visibleTabs.map((tabItem) => {
+              const Icon = tabItem.icon;
+              const isActive = activeTab === tabItem.id;
               return (
                 <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
+                  key={tabItem.id}
+                  onClick={() => navigate(`/settings/${tabItem.id}`)}
                   className={clsx(
-                    "flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all text-left whitespace-nowrap shrink-0 lg:shrink",
+                    "flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all text-left whitespace-nowrap shrink-0 md:shrink",
                     isActive
                       ? "bg-ledger-50 text-ledger-700 font-semibold border border-ledger-200"
                       : "text-stone-600 hover:text-ink-500 hover:bg-stone-50 border border-transparent"
                   )}
                 >
                   <Icon size={18} className={clsx("shrink-0", isActive ? "text-ledger-600" : "text-stone-400")} />
-                  <span className="flex-1 truncate">{tab.label}</span>
-                  {tab.phase && (
-                    <span className="hidden xl:inline text-[10px] font-mono px-1.5 py-0.5 rounded bg-stone-100 text-stone-500 font-normal">
-                      {tab.phase}
-                    </span>
-                  )}
+                  <span className="truncate">{tabItem.label}</span>
                 </button>
               );
             })}
           </nav>
         </div>
 
-        {/* Right Column: Tab Content */}
-        <div className="lg:col-span-3 space-y-6">
-          {/* TAB 1: Security (Active 2FA) */}
+        {/* Content Area */}
+        <div className="w-full md:col-span-3 space-y-6">
+          {/* TAB: Security */}
           {activeTab === "security" && (
             <SettingsSection
               title="Two-Factor Authentication (2FA)"
               description="Add an extra layer of protection to safeguard your company recruitment data."
-              badge={enabled ? "Protected" : "Action Recommended"}
             >
               {statusLoading ? (
                 <div className="py-12 flex flex-col items-center justify-center text-stone-400">
@@ -288,47 +281,27 @@ export default function Settings() {
             </SettingsSection>
           )}
 
-          {/* PLACEHOLDER TABS FOR PHASES 1 - 7 */}
-          {activeTab !== "security" && (
+          {/* TAB: Hiring Rules */}
+          {activeTab === "hiring" && <HiringSettings />}
+
+          {/* Placeholder for future enabled tabs */}
+          {activeTab !== "security" && activeTab !== "hiring" && (
             <SettingsSection
               title={currentTabObj.label}
               description={currentTabObj.description}
-              badge={currentTabObj.badge}
             >
               <div className="text-center py-12 px-4 max-w-lg mx-auto space-y-4">
                 <div className="w-14 h-14 rounded-2xl bg-ledger-50 border border-ledger-100 text-ledger-600 mx-auto flex items-center justify-center shadow-card">
                   <currentTabObj.icon size={26} />
                 </div>
-
                 <div>
                   <h3 className="text-lg font-bold text-ink-500 font-display">
-                    {currentTabObj.label} Settings
+                    {currentTabObj.label} Configuration
                   </h3>
                   <p className="text-sm text-stone-500 mt-1">
-                    Scheduled for delivery in <strong className="text-ledger-700">{currentTabObj.phase}</strong>.
+                    {currentTabObj.description}
                   </p>
                 </div>
-
-                <div className="p-4 rounded-xl bg-stone-50 border border-stone-200 text-left space-y-2">
-                  <div className="flex items-center justify-between text-xs text-stone-400 font-mono">
-                    <span>BACKEND STATUS</span>
-                    <span className="text-verified-600 font-medium">FOUNDATION READY</span>
-                  </div>
-                  <p className="text-xs text-stone-600 leading-relaxed">
-                    The schema and default configuration for <strong>{currentTabObj.label}</strong> have been initialized in the foundation database. Full interactive controls will activate in {currentTabObj.phase}.
-                  </p>
-                </div>
-
-                {settings && settings[activeTab] && (
-                  <div className="text-left pt-2">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-stone-400 mb-2">
-                      Active Default Values
-                    </p>
-                    <pre className="text-xs font-mono bg-ink-900 text-stone-200 p-3.5 rounded-xl overflow-x-auto max-h-56">
-                      {JSON.stringify(settings[activeTab], null, 2)}
-                    </pre>
-                  </div>
-                )}
               </div>
             </SettingsSection>
           )}

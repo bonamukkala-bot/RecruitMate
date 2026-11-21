@@ -23,6 +23,8 @@ def serialize_job(job: dict) -> dict:
 def create_job():
     company = get_current_company()
     jd_text = None
+    use_company_weights = True
+    scoring_weights = None
 
     # ── Handle file upload (PDF or Word) ─────────────────────────────────────
     if request.content_type and "multipart/form-data" in request.content_type:
@@ -35,10 +37,24 @@ def create_job():
         else:
             jd_text = request.form.get("jd_text", "").strip()
 
+        if "use_company_weights" in request.form:
+            use_company_weights = request.form.get("use_company_weights", "true").lower() == "true"
+        sw_raw = request.form.get("scoring_weights")
+        if sw_raw:
+            try:
+                import json
+                scoring_weights = json.loads(sw_raw)
+            except Exception:
+                pass
+
     # ── Handle raw JSON ───────────────────────────────────────────────────────
     elif request.is_json:
         body    = request.get_json()
         jd_text = body.get("jd_text", "").strip()
+        if "use_company_weights" in body:
+            use_company_weights = bool(body["use_company_weights"])
+        if "scoring_weights" in body and isinstance(body["scoring_weights"], dict):
+            scoring_weights = body["scoring_weights"]
 
     if not jd_text:
         return jsonify({"success": False, "error": "Provide jd_text or upload a PDF/Word file"}), 400
@@ -52,13 +68,15 @@ def create_job():
 
     job_doc = {
         **result["data"],
-        "company_id"      : company["company_id"],
-        "company_name"    : company["company_name"],
-        "raw_jd_text"     : jd_text,
-        "status"          : "active",
-        "candidates_count": 0,
-        "created_at"      : now,
-        "updated_at"      : now
+        "company_id"         : company["company_id"],
+        "company_name"       : company["company_name"],
+        "raw_jd_text"        : jd_text,
+        "status"             : "active",
+        "candidates_count"   : 0,
+        "use_company_weights": use_company_weights,
+        "scoring_weights"    : scoring_weights,
+        "created_at"         : now,
+        "updated_at"         : now
     }
 
     inserted       = jobs_collection.insert_one(job_doc)
@@ -124,6 +142,31 @@ def update_job_status(job_id):
         if result.matched_count == 0:
             return jsonify({"success": False, "error": "Job not found"}), 404
         return jsonify({"success": True, "message": f"Job status updated to '{status}'"}), 200
+    except Exception:
+        return jsonify({"success": False, "error": "Invalid job ID"}), 400
+
+# ── PATCH /api/jobs/<job_id> — Update job details / weights ──────────────────
+@jobs_bp.route("/<job_id>", methods=["PATCH"])
+@jwt_required
+def update_job(job_id):
+    company = get_current_company()
+    body    = request.get_json(silent=True) or {}
+    try:
+        cand_oid = ObjectId(job_id)
+        update_fields = {"updated_at": datetime.now(timezone.utc)}
+        if "use_company_weights" in body:
+            update_fields["use_company_weights"] = bool(body["use_company_weights"])
+        if "scoring_weights" in body and isinstance(body["scoring_weights"], dict):
+            update_fields["scoring_weights"] = body["scoring_weights"]
+
+        result = jobs_collection.update_one(
+            {"_id": cand_oid, "company_id": company["company_id"]},
+            {"$set": update_fields}
+        )
+        if result.matched_count == 0:
+            return jsonify({"success": False, "error": "Job not found"}), 404
+        updated = jobs_collection.find_one({"_id": cand_oid})
+        return jsonify({"success": True, "job": serialize_job(updated)}), 200
     except Exception:
         return jsonify({"success": False, "error": "Invalid job ID"}), 400
 

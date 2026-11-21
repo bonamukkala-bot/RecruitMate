@@ -29,6 +29,7 @@ candidates_collection = db["candidates"]
 pipeline_collection   = db["pipeline"]
 otp_collection        = db["otps"]
 company_settings_collection = db["company_settings"]
+audit_logs_collection = db["audit_logs"]
 
 # ── Indexes ───────────────────────────────────────────────────────────────────
 def create_indexes():
@@ -38,6 +39,7 @@ def create_indexes():
         jobs_collection.create_index([("company_id", ASCENDING)])
         candidates_collection.create_index([("company_id", ASCENDING)])
         candidates_collection.create_index([("job_id", ASCENDING)])
+        audit_logs_collection.create_index([("company_id", ASCENDING)])
         otp_collection.create_index(
             [("expires_at", ASCENDING)],
             expireAfterSeconds=0

@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify
-from utils.db import candidates_collection, jobs_collection
+from utils.db import candidates_collection, jobs_collection, audit_logs_collection
 from utils.auth_helper import jwt_required, get_current_company
 from utils.file_extractor import extract_text_from_file
 from agents.resume_screener import screen_resume
@@ -101,7 +101,17 @@ def screen_candidate(job_id):
         return jsonify({"success": False, "error": "candidate_name is required"}), 400
 
     # ── Agent 2: Screen resume ────────────────────────────────────────────────
-    screen_result = screen_resume(resume_text, job)
+    from utils.settings import get_settings
+    hiring_settings = get_settings(company["company_id"]).get("hiring", {})
+
+    # Per-job scoring_weights override:
+    # If job has use_company_weights is False and job has scoring_weights, use job scoring_weights
+    if job.get("use_company_weights") is False and job.get("scoring_weights"):
+        scoring_weights = job.get("scoring_weights")
+    else:
+        scoring_weights = hiring_settings.get("scoring_weights")
+
+    screen_result = screen_resume(resume_text, job, scoring_weights=scoring_weights)
     if not screen_result["success"]:
         return jsonify({"success": False, "error": screen_result["error"]}), 500
 
@@ -109,28 +119,35 @@ def screen_candidate(job_id):
     match_score  = screen_data.get("match_score", 0)
     now          = datetime.now(timezone.utc)
 
+    auto_reject_requires_approval = bool(
+        hiring_settings.get("approval_mode", {}).get("auto_reject_requires_approval", False)
+    )
+
     # ── Auto-reject at resume-screening stage if below threshold ──────────────
     if match_score < SCREEN_REJECT_THRESHOLD:
+        status = "pending_review" if auto_reject_requires_approval else "rejected"
         candidate_doc = {
-            "company_id"         : company["company_id"],
-            "job_id"             : job_id,
-            "job_title"          : job.get("job_title", ""),
-            "candidate_name"     : candidate_name,
-            "candidate_email"    : candidate_email,
-            "match_score"        : match_score,
-            "matched_skills"     : screen_data.get("matched_skills", []),
-            "missing_skills"     : screen_data.get("missing_skills", []),
-            "experience_match"   : screen_data.get("experience_match", False),
-            "recommendation"     : screen_data.get("recommendation", ""),
-            "reasoning"          : screen_data.get("reasoning", ""),
-            "interview_questions": {},
-            "status"             : "rejected",
-            "email_sent"         : False,
-            "resume_text"        : resume_text,
-            "evaluation"         : None,
-            "schedule"           : None,
-            "created_at"         : now,
-            "updated_at"         : now
+            "company_id"          : company["company_id"],
+            "job_id"              : job_id,
+            "job_title"           : job.get("job_title", ""),
+            "candidate_name"      : candidate_name,
+            "candidate_email"     : candidate_email,
+            "match_score"         : match_score,
+            "matched_skills"      : screen_data.get("matched_skills", []),
+            "missing_skills"      : screen_data.get("missing_skills", []),
+            "experience_match"    : screen_data.get("experience_match", False),
+            "recommendation"      : screen_data.get("recommendation", ""),
+            "reasoning"           : screen_data.get("reasoning", ""),
+            "interview_questions" : {},
+            "status"              : status,
+            "recommended_decision": "reject",
+            "review_reason"       : f"Resume screening score {match_score} is below threshold {SCREEN_REJECT_THRESHOLD}",
+            "email_sent"          : False,
+            "resume_text"         : resume_text,
+            "evaluation"          : None,
+            "schedule"            : None,
+            "created_at"          : now,
+            "updated_at"          : now
         }
 
         inserted = candidates_collection.insert_one(candidate_doc)
@@ -139,6 +156,19 @@ def screen_candidate(job_id):
             {"_id": ObjectId(job_id)},
             {"$inc": {"candidates_count": 1}}
         )
+
+        candidate_doc["_id"]        = str(inserted.inserted_id)
+        candidate_doc["created_at"] = now.isoformat()
+        candidate_doc["updated_at"] = now.isoformat()
+
+        if auto_reject_requires_approval:
+            return jsonify({
+                "success"       : True,
+                "message"       : "Candidate requires review before rejection",
+                "candidate_id"  : str(inserted.inserted_id),
+                "candidate"     : candidate_doc,
+                "pending_review": True
+            }), 201
 
         email_result = send_rejection_email(
             candidate_data=candidate_doc,
@@ -153,9 +183,6 @@ def screen_candidate(job_id):
             {"$set": {"email_sent": email_result.get("success", False)}}
         )
 
-        candidate_doc["_id"]        = str(inserted.inserted_id)
-        candidate_doc["created_at"] = now.isoformat()
-        candidate_doc["updated_at"] = now.isoformat()
         candidate_doc["email_sent"] = email_result.get("success", False)
 
         return jsonify({
@@ -457,7 +484,7 @@ def update_status(candidate_id):
     body    = request.get_json()
     status  = body.get("status", "").strip()
 
-    valid_statuses = {"screened", "shortlisted", "invited", "hired", "rejected"}
+    valid_statuses = {"screened", "shortlisted", "invited", "hired", "rejected", "pending_review", "advance"}
     if status not in valid_statuses:
         return jsonify({"success": False, "error": f"Invalid status. Must be one of {valid_statuses}"}), 400
 
@@ -504,6 +531,125 @@ def update_status(candidate_id):
         }), 200
     except Exception:
         return jsonify({"success": False, "error": "Invalid candidate ID"}), 400
+
+# ── POST /api/candidates/detail/<candidate_id>/review/approve ─────────────────
+@candidates_bp.route("/detail/<candidate_id>/review/approve", methods=["POST"])
+@jwt_required
+def approve_candidate_review(candidate_id):
+    company = get_current_company()
+    try:
+        cand_oid = ObjectId(candidate_id)
+    except Exception:
+        return jsonify({"success": False, "error": "Invalid candidate ID"}), 400
+
+    candidate = candidates_collection.find_one({
+        "_id"       : cand_oid,
+        "company_id": company["company_id"]
+    })
+    if not candidate:
+        return jsonify({"success": False, "error": "Candidate not found"}), 404
+
+    now = datetime.now(timezone.utc)
+    candidates_collection.update_one(
+        {"_id": cand_oid},
+        {"$set": {
+            "status"     : "rejected",
+            "reviewed_at": now,
+            "reviewed_by": company.get("email"),
+            "updated_at" : now
+        }}
+    )
+
+    # Send rejection email
+    job = jobs_collection.find_one({"_id": ObjectId(candidate["job_id"])}) if candidate.get("job_id") else None
+    stage = "interview" if candidate.get("interview_status") == "completed" else "resume screening"
+    email_result = send_rejection_email(
+        candidate_data=candidate,
+        job_data=job,
+        company_name=company["company_name"],
+        from_email=os.getenv("BREVO_SENDER_EMAIL"),
+        stage=stage
+    )
+
+    # Log audit entry
+    audit_logs_collection.insert_one({
+        "company_id"  : company["company_id"],
+        "user_email"  : company.get("email"),
+        "action"      : "candidate_review_approve",
+        "candidate_id": candidate_id,
+        "timestamp"   : now,
+        "details"     : {
+            "previous_status": candidate.get("status"),
+            "new_status"     : "rejected",
+            "email_sent"     : email_result.get("success", False)
+        }
+    })
+
+    updated_candidate = candidates_collection.find_one({"_id": cand_oid})
+    return jsonify({
+        "success"   : True,
+        "message"   : "Candidate rejection approved",
+        "candidate" : serialize_candidate(updated_candidate),
+        "email_sent": email_result.get("success", False)
+    }), 200
+
+# ── POST /api/candidates/detail/<candidate_id>/review/override ────────────────
+@candidates_bp.route("/detail/<candidate_id>/review/override", methods=["POST"])
+@jwt_required
+def override_candidate_review(candidate_id):
+    company = get_current_company()
+    body    = request.get_json(silent=True) or {}
+    try:
+        cand_oid = ObjectId(candidate_id)
+    except Exception:
+        return jsonify({"success": False, "error": "Invalid candidate ID"}), 400
+
+    candidate = candidates_collection.find_one({
+        "_id"       : cand_oid,
+        "company_id": company["company_id"]
+    })
+    if not candidate:
+        return jsonify({"success": False, "error": "Candidate not found"}), 404
+
+    target_status = body.get("status") or body.get("target_status") or "shortlisted"
+    valid_statuses = {"screened", "shortlisted", "invited", "advance", "hired"}
+    if target_status not in valid_statuses:
+        target_status = "shortlisted"
+
+    reason = (body.get("reason") or "").strip()
+    now    = datetime.now(timezone.utc)
+
+    candidates_collection.update_one(
+        {"_id": cand_oid},
+        {"$set": {
+            "status"         : target_status,
+            "reviewed_at"    : now,
+            "reviewed_by"    : company.get("email"),
+            "override_reason": reason,
+            "updated_at"     : now
+        }}
+    )
+
+    # Log audit entry
+    audit_logs_collection.insert_one({
+        "company_id"  : company["company_id"],
+        "user_email"  : company.get("email"),
+        "action"      : "candidate_review_override",
+        "candidate_id": candidate_id,
+        "timestamp"   : now,
+        "details"     : {
+            "previous_status": candidate.get("status"),
+            "new_status"     : target_status,
+            "reason"         : reason
+        }
+    })
+
+    updated_candidate = candidates_collection.find_one({"_id": cand_oid})
+    return jsonify({
+        "success"  : True,
+        "message"  : f"Candidate rejection overridden to '{target_status}'",
+        "candidate": serialize_candidate(updated_candidate)
+    }), 200
 
 # ── DELETE /api/candidates/detail/<candidate_id> ─────────────────────────────
 @candidates_bp.route("/detail/<candidate_id>", methods=["DELETE"])
