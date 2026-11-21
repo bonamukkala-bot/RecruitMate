@@ -1,11 +1,13 @@
 import os
+import hashlib
+import re
 import sib_api_v3_sdk
 from sib_api_v3_sdk.rest import ApiException
 from datetime import datetime, timezone, timedelta
 from flask import Blueprint, request, jsonify
 import requests
-from utils.db import companies_collection, otp_collection
-from utils.auth_helper import hash_password, verify_password, generate_token, generate_otp
+from utils.db import companies_collection, otp_collection, team_members_collection
+from utils.auth_helper import hash_password, verify_password, generate_token, generate_otp, log_audit_event
 from config import Config
 import pyotp
 import qrcode
@@ -370,52 +372,252 @@ def login():
     password = body.get("password", "")
     totp_code = body.get("totp_code")
 
-    print(f"\n[DEBUG /api/auth/login] Received login request for: '{email}'")
-    print(f"[DEBUG /api/auth/login] Database name in use: '{companies_collection.database.name}'")
-
     if not email or not password:
-        print("[DEBUG /api/auth/login] 400: Missing email or password in request body")
         return jsonify({"success": False, "error": "Email and password are required"}), 400
 
+    # 1. Check owner account (companies collection)
     company = companies_collection.find_one({"email": email})
 
-    if not company:
-        print(f"[DEBUG /api/auth/login] 401: User NOT found in '{companies_collection.name}' collection for email: '{email}'")
+    if company:
+        if not company.get("is_verified"):
+            return jsonify({"success": False, "error": "Please verify your email first"}), 403
+
+        if not verify_password(password, company["password"]):
+            return jsonify({"success": False, "error": "Invalid email or password"}), 401
+
+        # Keep 2FA flow for owner accounts untouched
+        if company.get("totp_enabled"):
+            if not totp_code:
+                return jsonify({
+                    "success": False,
+                    "requires_2fa": True,
+                    "message": "Enter your 2FA code"
+                }), 200
+
+            totp = pyotp.TOTP(company["totp_secret"])
+            if not totp.verify(totp_code, valid_window=1):
+                return jsonify({"success": False, "error": "Invalid 2FA code"}), 401
+
+        token = generate_token(company, role="owner", user_id=str(company["_id"]))
+        log_audit_event(
+            company_id=str(company["_id"]),
+            action="auth.owner_login",
+            actor={"user_id": str(company["_id"]), "email": email, "role": "owner"}
+        )
+
+        return jsonify({
+            "success"     : True,
+            "message"     : "Login successful",
+            "token"       : token,
+            "company_name": company.get("company_name", ""),
+            "company_id"  : str(company["_id"]),
+            "role"        : "owner",
+            "name"        : company.get("full_name") or company.get("company_name", "")
+        }), 200
+
+    # 2. Check team member account (team_members collection)
+    member = team_members_collection.find_one({"email": email})
+
+    if not member:
         return jsonify({"success": False, "error": "Invalid email or password"}), 401
 
-    print(f"[DEBUG /api/auth/login] User found: company_id={company.get('_id')}, is_verified={company.get('is_verified')}")
+    member_status = member.get("status")
+    if member_status == "disabled":
+        return jsonify({
+            "success": False,
+            "error": "Your account has been disabled. Please contact your company administrator."
+        }), 403
 
-    if not company.get("is_verified"):
-        print(f"[DEBUG /api/auth/login] 403: User is not verified")
-        return jsonify({"success": False, "error": "Please verify your email first"}), 403
+    if member_status == "invited":
+        return jsonify({
+            "success": False,
+            "error": "Please accept your email invitation to activate your account."
+        }), 403
 
-    if not verify_password(password, company["password"]):
-        print(f"[DEBUG /api/auth/login] 401: Password verification failed (bcrypt mismatch) for email: '{email}'")
+    # Verify password against stored bcrypt hash
+    if not member.get("password_hash") or not verify_password(password, member["password_hash"]):
         return jsonify({"success": False, "error": "Invalid email or password"}), 401
 
-    if company.get("totp_enabled"):
-        if not totp_code:
-            print("[DEBUG /api/auth/login] 200: 2FA required for this account")
-            return jsonify({
-                "success": False,
-                "requires_2fa": True,
-                "message": "Enter your 2FA code"
-            }), 200
+    # Update last login time
+    now_utc = datetime.now(timezone.utc)
+    team_members_collection.update_one(
+        {"_id": member["_id"]},
+        {"$set": {"last_login_at": now_utc}}
+    )
 
-        totp = pyotp.TOTP(company["totp_secret"])
-        if not totp.verify(totp_code, valid_window=1):
-            print("[DEBUG /api/auth/login] 401: 2FA TOTP verification failed")
-            return jsonify({"success": False, "error": "Invalid 2FA code"}), 401
+    # Fetch company name
+    parent_company = None
+    try:
+        parent_company = companies_collection.find_one({"_id": ObjectId(member["company_id"])})
+    except Exception:
+        pass
+    company_name = parent_company.get("company_name", "") if parent_company else ""
 
-    print(f"[DEBUG /api/auth/login] 200: Login successful for email: '{email}'")
-    token = generate_token(company)
+    token = generate_token(
+        {
+            "company_id"  : str(member["company_id"]),
+            "email"       : member["email"],
+            "company_name": company_name,
+            "name"        : member.get("name", "")
+        },
+        role=member.get("role", "viewer"),
+        user_id=str(member["_id"])
+    )
+
+    log_audit_event(
+        company_id=str(member["company_id"]),
+        action="auth.member_login",
+        actor={
+            "user_id": str(member["_id"]),
+            "email": member["email"],
+            "role": member.get("role", "viewer")
+        }
+    )
 
     return jsonify({
         "success"     : True,
         "message"     : "Login successful",
         "token"       : token,
-        "company_name": company["company_name"],
-        "company_id"  : str(company["_id"])
+        "company_name": company_name,
+        "company_id"  : str(member["company_id"]),
+        "role"        : member.get("role", "viewer"),
+        "name"        : member.get("name", "")
+    }), 200
+
+# ── GET /api/auth/verify-invite ───────────────────────────────────────────────
+@auth_bp.route("/verify-invite", methods=["GET"])
+def verify_invite():
+    """
+    Public endpoint to validate an invite token.
+    Token is checked by its SHA-256 hash.
+    """
+    raw_token = request.args.get("token", "").strip()
+    if not raw_token:
+        return jsonify({"success": False, "error": "Invitation token is required"}), 400
+
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    member = team_members_collection.find_one({
+        "invite_token_hash": token_hash,
+        "status": "invited"
+    })
+
+    if not member:
+        return jsonify({"success": False, "error": "Invalid or expired invitation link"}), 400
+
+    expires_at = member.get("invite_expires_at")
+    if expires_at:
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) > expires_at:
+            return jsonify({"success": False, "error": "Invalid or expired invitation link"}), 400
+
+    parent_company = None
+    try:
+        parent_company = companies_collection.find_one({"_id": ObjectId(member["company_id"])})
+    except Exception:
+        pass
+    company_name = parent_company.get("company_name", "") if parent_company else "RecruitMate Organization"
+
+    return jsonify({
+        "success": True,
+        "email": member["email"],
+        "role": member["role"],
+        "company_name": company_name
+    }), 200
+
+# ── POST /api/auth/accept-invite ──────────────────────────────────────────────
+@auth_bp.route("/accept-invite", methods=["POST"])
+def accept_invite():
+    """
+    Public endpoint for invited team member to set name and password.
+    Invalidates the invite token immediately upon use.
+    """
+    body = request.get_json(silent=True) or {}
+    raw_token = body.get("token", "").strip()
+    name = body.get("name", "").strip()
+    password = body.get("password", "")
+
+    if not raw_token:
+        return jsonify({"success": False, "error": "Invitation token is required"}), 400
+
+    if not name:
+        return jsonify({"success": False, "error": "Full name is required"}), 400
+
+    # Password validation: minimum 8 characters, at least 1 digit, at least 1 uppercase or special character
+    if len(password) < 8:
+        return jsonify({"success": False, "error": "Password must be at least 8 characters long"}), 400
+    if not re.search(r"\d", password):
+        return jsonify({"success": False, "error": "Password must contain at least one digit"}), 400
+    if not re.search(r"[A-Z!@#$%^&*(),.?\":{}|<>]", password):
+        return jsonify({"success": False, "error": "Password must contain at least one uppercase letter or special character"}), 400
+
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    member = team_members_collection.find_one({
+        "invite_token_hash": token_hash,
+        "status": "invited"
+    })
+
+    if not member:
+        return jsonify({"success": False, "error": "Invalid or expired invitation link"}), 400
+
+    expires_at = member.get("invite_expires_at")
+    if expires_at:
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) > expires_at:
+            return jsonify({"success": False, "error": "Invalid or expired invitation link"}), 400
+
+    now_utc = datetime.now(timezone.utc)
+    hashed_pwd = hash_password(password)
+
+    # Invalidate token on use and activate account
+    team_members_collection.update_one(
+        {"_id": member["_id"]},
+        {"$set": {
+            "name": name,
+            "password_hash": hashed_pwd,
+            "status": "active",
+            "invite_token_hash": None,
+            "invite_expires_at": None,
+            "accepted_at": now_utc,
+            "last_login_at": now_utc
+        }}
+    )
+
+    parent_company = None
+    try:
+        parent_company = companies_collection.find_one({"_id": ObjectId(member["company_id"])})
+    except Exception:
+        pass
+    company_name = parent_company.get("company_name", "") if parent_company else ""
+
+    token = generate_token(
+        {
+            "company_id"  : str(member["company_id"]),
+            "email"       : member["email"],
+            "company_name": company_name,
+            "name"        : name
+        },
+        role=member.get("role", "viewer"),
+        user_id=str(member["_id"])
+    )
+
+    log_audit_event(
+        company_id=str(member["company_id"]),
+        action="team.member_accepted",
+        actor={"user_id": str(member["_id"]), "email": member["email"], "role": member.get("role", "viewer")},
+        target=member["email"],
+        details={"name": name, "role": member.get("role", "viewer")}
+    )
+
+    return jsonify({
+        "success"     : True,
+        "message"     : "Invitation accepted successfully",
+        "token"       : token,
+        "company_name": company_name,
+        "company_id"  : str(member["company_id"]),
+        "role"        : member.get("role", "viewer"),
+        "name"        : name
     }), 200
 
 # ── GET /api/auth/me ──────────────────────────────────────────────────────────

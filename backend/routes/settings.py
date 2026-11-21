@@ -1,13 +1,24 @@
 import copy
 import time
+import secrets
+import hashlib
+import html
+import re
 import traceback
+from bson import ObjectId
 import sib_api_v3_sdk
 from sib_api_v3_sdk.rest import ApiException
 from datetime import datetime, timezone, timedelta
 from flask import Blueprint, request, jsonify
 from config import Config
-from utils.auth_helper import jwt_required, get_current_company
-from utils.db import company_settings_collection, llm_usage_collection
+from utils.auth_helper import jwt_required, get_current_company, require_role, log_audit_event
+from utils.db import (
+    company_settings_collection,
+    llm_usage_collection,
+    team_members_collection,
+    companies_collection,
+    audit_logs_collection
+)
 from utils.settings import (
     DEFAULT_SETTINGS,
     VALID_SECTIONS,
@@ -63,10 +74,11 @@ def get_all_settings():
 # ── PUT /api/settings/<section> ───────────────────────────────────────────────
 @settings_bp.route("/<section>", methods=["PUT"])
 @jwt_required
+@require_role("admin")
 def update_section(section: str):
     """
     Update a single settings section for the authenticated company.
-    Validates input schema and performs deep validation.
+    Requires 'admin' role or higher.
     """
     try:
         company = get_current_company()
@@ -103,6 +115,13 @@ def update_section(section: str):
             upsert=True
         )
 
+        log_audit_event(
+            company_id=str(company_id),
+            action=f"settings.{section}_update",
+            target=section,
+            details={"section": section}
+        )
+
         return jsonify({
             "success": True,
             "message": f"{section.capitalize()} settings updated successfully",
@@ -117,9 +136,11 @@ def update_section(section: str):
 # ── POST /api/settings/<section>/reset ────────────────────────────────────────
 @settings_bp.route("/<section>/reset", methods=["POST"])
 @jwt_required
+@require_role("admin")
 def reset_section(section: str):
     """
     Reset a specific settings section back to its default configuration.
+    Requires 'admin' role or higher.
     """
     try:
         company = get_current_company()
@@ -149,6 +170,13 @@ def reset_section(section: str):
             upsert=True
         )
 
+        log_audit_event(
+            company_id=str(company_id),
+            action=f"settings.{section}_reset",
+            target=section,
+            details={"section": section}
+        )
+
         return jsonify({
             "success": True,
             "message": f"{section.capitalize()} settings reset to defaults",
@@ -163,6 +191,7 @@ def reset_section(section: str):
 # ── POST /api/settings/email/preview ──────────────────────────────────────────
 @settings_bp.route("/email/preview", methods=["POST"])
 @jwt_required
+@require_role("admin")
 def preview_email_template():
     """
     Renders an email template with sample context data.
@@ -269,6 +298,7 @@ def preview_email_template():
 # ── POST /api/settings/email/send-test ────────────────────────────────────────
 @settings_bp.route("/email/send-test", methods=["POST"])
 @jwt_required
+@require_role("admin")
 def send_test_email():
     """
     Sends a test email to the authenticated user's email address.
@@ -589,3 +619,523 @@ def get_ai_usage():
     except Exception as e:
         traceback.print_exc()
         return jsonify({"success": False, "error": f"Failed to fetch AI usage: {str(e)}"}), 500
+
+# ── Team Invitation Email Helper ──────────────────────────────────────────────
+def send_invite_email(to_email: str, inviter_name: str, company_name: str, role: str, raw_token: str) -> tuple[bool, str]:
+    """Sends a transactional team invitation email via Brevo."""
+    if not Config.BREVO_API_KEY:
+        err = "BREVO_API_KEY is not configured"
+        print(f"[Brevo Invite] Error: {err}")
+        return False, err
+
+    try:
+        configuration = sib_api_v3_sdk.Configuration()
+        configuration.api_key["api-key"] = Config.BREVO_API_KEY
+        api_instance = sib_api_v3_sdk.TransactionalEmailsApi(sib_api_v3_sdk.ApiClient(configuration))
+
+        accept_link = f"{Config.FRONTEND_URL}/accept-invite?token={raw_token}"
+        escaped_company = html.escape(company_name or "RecruitMate Organization")
+        escaped_inviter = html.escape(inviter_name or "A team administrator")
+        escaped_role = html.escape(role.capitalize())
+
+        html_content = f"""
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 540px; margin: auto; padding: 32px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
+            <div style="text-align: center; margin-bottom: 24px;">
+                <h1 style="color: #0f172a; font-size: 22px; margin: 0;">Join {escaped_company}</h1>
+                <p style="color: #64748b; font-size: 14px; margin-top: 6px;">RecruitMate Team Invitation</p>
+            </div>
+            <p style="color: #334155; font-size: 15px; line-height: 1.6;">
+                Hi there,
+            </p>
+            <p style="color: #334155; font-size: 15px; line-height: 1.6;">
+                <strong>{escaped_inviter}</strong> has invited you to join <strong>{escaped_company}</strong> as a <strong>{escaped_role}</strong>.
+            </p>
+            <div style="text-align: center; margin: 32px 0;">
+                <a href="{accept_link}" style="background-color: #0284c7; color: #ffffff; padding: 14px 28px; text-decoration: none; border-radius: 10px; font-weight: 600; font-size: 15px; display: inline-block;">
+                    Accept Invitation & Set Password
+                </a>
+            </div>
+            <p style="color: #94a3b8; font-size: 13px; line-height: 1.5;">
+                This invitation link will expire in 72 hours and can only be used once.<br>
+                If you did not expect this invitation, you can safely ignore this email.
+            </p>
+            <hr style="border: none; border-top: 1px solid #f1f5f9; margin: 24px 0;" />
+            <p style="color: #cbd5e1; font-size: 12px; margin: 0; text-align: center;">
+                RecruitMate — Autonomous AI Hiring Platform
+            </p>
+        </div>
+        """
+
+        send_params = {
+            "to": [{"email": to_email}],
+            "sender": {
+                "name": Config.BREVO_SENDER_NAME or "RecruitMate AI",
+                "email": Config.BREVO_SENDER_EMAIL
+            },
+            "subject": f"Invitation to join {company_name} on RecruitMate",
+            "html_content": html_content
+        }
+        send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(**send_params)
+        resp = api_instance.send_transac_email(send_smtp_email)
+        message_id = getattr(resp, "message_id", str(resp))
+        print(f"[Brevo Invite] Sent invitation to {to_email}. Message ID: {message_id}")
+        return True, ""
+    except ApiException as e:
+        status_code = getattr(e, "status", None)
+        body = getattr(e, "body", str(e))
+        print(f"[Brevo Invite] API Error - Status: {status_code}, Body: {body}")
+        return False, f"Email provider error ({status_code})"
+    except Exception as e:
+        print(f"[Brevo Invite] Unexpected send failure: {e}")
+        return False, str(e)
+
+# ── GET /api/settings/team/members ────────────────────────────────────────────
+@settings_bp.route("/team/members", methods=["GET"])
+@jwt_required
+def get_team_members():
+    """
+    List all team members for the company, including the company owner.
+    """
+    try:
+        current = get_current_company()
+        company_id = str(current["company_id"])
+
+        # Fetch company owner
+        owner = None
+        try:
+            owner = companies_collection.find_one({"_id": ObjectId(company_id)})
+        except Exception:
+            pass
+        if not owner:
+            owner = companies_collection.find_one({"_id": company_id})
+
+        members_list = []
+        if owner:
+            owner_created = owner.get("created_at")
+            if isinstance(owner_created, datetime):
+                owner_created = owner_created.isoformat()
+            members_list.append({
+                "id": str(owner["_id"]),
+                "name": owner.get("full_name") or owner.get("company_name", "Owner"),
+                "email": owner["email"],
+                "role": "owner",
+                "status": "active",
+                "is_owner": True,
+                "created_at": owner_created,
+                "last_login_at": None
+            })
+
+        # Fetch team members
+        for m in team_members_collection.find({"company_id": company_id}).sort("created_at", -1):
+            created_at = m.get("created_at")
+            if isinstance(created_at, datetime):
+                created_at = created_at.isoformat()
+            last_login = m.get("last_login_at")
+            if isinstance(last_login, datetime):
+                last_login = last_login.isoformat()
+
+            members_list.append({
+                "id": str(m["_id"]),
+                "name": m.get("name") or "",
+                "email": m["email"],
+                "role": m.get("role", "viewer"),
+                "status": m.get("status", "invited"),
+                "is_owner": False,
+                "created_at": created_at,
+                "last_login_at": last_login
+            })
+
+        return jsonify({
+            "success": True,
+            "members": members_list
+        }), 200
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": f"Failed to fetch team members: {str(e)}"}), 500
+
+# ── POST /api/settings/team/invite ────────────────────────────────────────────
+@settings_bp.route("/team/invite", methods=["POST"])
+@jwt_required
+@require_role("admin")
+def invite_team_member():
+    """
+    Invite a new team member. Generates a single-use token and sends an invite email.
+    """
+    try:
+        current = get_current_company()
+        company_id = str(current["company_id"])
+        body = request.get_json(silent=True) or {}
+        email = body.get("email", "").lower().strip()
+        role = body.get("role", "recruiter").strip().lower()
+
+        if not email:
+            return jsonify({"success": False, "error": "Email is required"}), 400
+
+        # Validate email format
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+            return jsonify({"success": False, "error": "Invalid email address format"}), 400
+
+        valid_invite_roles = {"admin", "recruiter", "viewer"}
+        if role not in valid_invite_roles:
+            return jsonify({
+                "success": False,
+                "error": f"Invalid role '{role}'. Allowed invite roles: {sorted(list(valid_invite_roles))}"
+            }), 400
+
+        # Check if email is owner
+        owner = companies_collection.find_one({"email": email})
+        if owner:
+            return jsonify({"success": False, "error": "This email belongs to a registered company owner"}), 400
+
+        # Check existing team members
+        existing = team_members_collection.find_one({"email": email})
+        if existing:
+            status = existing.get("status")
+            if status == "active":
+                return jsonify({"success": False, "error": "A team member with this email already exists"}), 400
+            elif status == "invited":
+                return jsonify({"success": False, "error": "An invitation is already pending for this email. Use Resend Invite."}), 400
+            elif status == "disabled":
+                return jsonify({"success": False, "error": "A team member with this email exists and is currently disabled"}), 400
+
+        # Generate single-use token and store ONLY its hash
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+        now_utc = datetime.now(timezone.utc)
+        expires_at = now_utc + timedelta(hours=72)
+
+        member_doc = {
+            "company_id": company_id,
+            "email": email,
+            "name": "",
+            "role": role,
+            "status": "invited",
+            "password_hash": None,
+            "invite_token_hash": token_hash,
+            "invite_expires_at": expires_at,
+            "created_at": now_utc,
+            "invited_by": current.get("email")
+        }
+
+        inserted = team_members_collection.insert_one(member_doc)
+
+        # Send Brevo email
+        company_name = current.get("company_name", "RecruitMate Organization")
+        inviter_name = current.get("name") or current.get("email") or "Administrator"
+        email_sent, err_msg = send_invite_email(email, inviter_name, company_name, role, raw_token)
+
+        log_audit_event(
+            company_id=company_id,
+            action="team.invite",
+            target=email,
+            details={"role": role, "email_sent": email_sent}
+        )
+
+        return jsonify({
+            "success": True,
+            "message": f"Invitation sent to {email}",
+            "member_id": str(inserted.inserted_id),
+            "email_sent": email_sent
+        }), 201
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": f"Failed to invite team member: {str(e)}"}), 500
+
+# ── PATCH /api/settings/team/members/<member_id>/role ─────────────────────────
+@settings_bp.route("/team/members/<member_id>/role", methods=["PATCH"])
+@jwt_required
+@require_role("admin")
+def update_member_role(member_id: str):
+    """
+    Update a team member's role.
+    Owner role cannot be changed. Last admin rules prevent lockout.
+    """
+    try:
+        current = get_current_company()
+        company_id = str(current["company_id"])
+        body = request.get_json(silent=True) or {}
+        new_role = body.get("role", "").strip().lower()
+
+        valid_roles = {"admin", "recruiter", "viewer"}
+        if new_role not in valid_roles:
+            return jsonify({
+                "success": False,
+                "error": f"Invalid role '{new_role}'. Allowed: {sorted(list(valid_roles))}"
+            }), 400
+
+        # Protect owner
+        if member_id == company_id:
+            return jsonify({"success": False, "error": "Company owner role cannot be changed"}), 400
+
+        member = None
+        try:
+            member = team_members_collection.find_one({
+                "_id": ObjectId(member_id),
+                "company_id": company_id
+            })
+        except Exception:
+            pass
+        if not member:
+            return jsonify({"success": False, "error": "Team member not found"}), 404
+
+        old_role = member.get("role")
+        if old_role == new_role:
+            return jsonify({"success": True, "message": "Role unchanged"}), 200
+
+        # Last admin lockout prevention
+        if old_role == "admin" and new_role != "admin":
+            admin_count = team_members_collection.count_documents({
+                "company_id": company_id,
+                "role": "admin",
+                "status": {"$ne": "disabled"}
+            })
+            if admin_count <= 1:
+                return jsonify({
+                    "success": False,
+                    "error": "Cannot demote the last remaining administrator"
+                }), 400
+
+        team_members_collection.update_one(
+            {"_id": member["_id"]},
+            {"$set": {"role": new_role, "updated_at": datetime.now(timezone.utc)}}
+        )
+
+        log_audit_event(
+            company_id=company_id,
+            action="team.role_change",
+            target=member["email"],
+            details={"old_role": old_role, "new_role": new_role}
+        )
+
+        return jsonify({
+            "success": True,
+            "message": f"Updated {member['email']} role to {new_role}"
+        }), 200
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": f"Failed to update member role: {str(e)}"}), 500
+
+# ── PATCH /api/settings/team/members/<member_id>/status ───────────────────────
+@settings_bp.route("/team/members/<member_id>/status", methods=["PATCH"])
+@jwt_required
+@require_role("admin")
+def update_member_status(member_id: str):
+    """
+    Disable or re-enable a team member.
+    Owner cannot be disabled. Last admin rules prevent lockout.
+    """
+    try:
+        current = get_current_company()
+        company_id = str(current["company_id"])
+        body = request.get_json(silent=True) or {}
+        new_status = body.get("status", "").strip().lower()
+
+        if new_status not in {"active", "disabled"}:
+            return jsonify({"success": False, "error": "Status must be 'active' or 'disabled'"}), 400
+
+        # Protect owner
+        if member_id == company_id:
+            return jsonify({"success": False, "error": "Company owner cannot be disabled"}), 400
+
+        member = None
+        try:
+            member = team_members_collection.find_one({
+                "_id": ObjectId(member_id),
+                "company_id": company_id
+            })
+        except Exception:
+            pass
+        if not member:
+            return jsonify({"success": False, "error": "Team member not found"}), 404
+
+        # Last admin lockout prevention
+        if new_status == "disabled" and member.get("role") == "admin":
+            admin_count = team_members_collection.count_documents({
+                "company_id": company_id,
+                "role": "admin",
+                "status": "active"
+            })
+            if admin_count <= 1:
+                return jsonify({
+                    "success": False,
+                    "error": "Cannot disable the last active administrator"
+                }), 400
+
+        team_members_collection.update_one(
+            {"_id": member["_id"]},
+            {"$set": {"status": new_status, "updated_at": datetime.now(timezone.utc)}}
+        )
+
+        log_audit_event(
+            company_id=company_id,
+            action="team.status_change",
+            target=member["email"],
+            details={"status": new_status}
+        )
+
+        return jsonify({
+            "success": True,
+            "message": f"Team member {member['email']} is now {new_status}"
+        }), 200
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": f"Failed to update member status: {str(e)}"}), 500
+
+# ── POST /api/settings/team/members/<member_id>/resend-invite ─────────────────
+@settings_bp.route("/team/members/<member_id>/resend-invite", methods=["POST"])
+@jwt_required
+@require_role("admin")
+def resend_invite(member_id: str):
+    """
+    Generate a fresh single-use invite token and resend the invitation email.
+    """
+    try:
+        current = get_current_company()
+        company_id = str(current["company_id"])
+
+        member = None
+        try:
+            member = team_members_collection.find_one({
+                "_id": ObjectId(member_id),
+                "company_id": company_id
+            })
+        except Exception:
+            pass
+        if not member:
+            return jsonify({"success": False, "error": "Team member not found"}), 404
+
+        if member.get("status") != "invited":
+            return jsonify({"success": False, "error": "Can only resend invitations to pending members"}), 400
+
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+        now_utc = datetime.now(timezone.utc)
+        expires_at = now_utc + timedelta(hours=72)
+
+        team_members_collection.update_one(
+            {"_id": member["_id"]},
+            {"$set": {
+                "invite_token_hash": token_hash,
+                "invite_expires_at": expires_at,
+                "updated_at": now_utc
+            }}
+        )
+
+        company_name = current.get("company_name", "RecruitMate Organization")
+        inviter_name = current.get("name") or current.get("email") or "Administrator"
+        email_sent, err_msg = send_invite_email(member["email"], inviter_name, company_name, member["role"], raw_token)
+
+        log_audit_event(
+            company_id=company_id,
+            action="team.resend_invite",
+            target=member["email"],
+            details={"email_sent": email_sent}
+        )
+
+        return jsonify({
+            "success": True,
+            "message": f"Invitation resent to {member['email']}",
+            "email_sent": email_sent
+        }), 200
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": f"Failed to resend invitation: {str(e)}"}), 500
+
+# ── DELETE /api/settings/team/members/<member_id> ─────────────────────────────
+@settings_bp.route("/team/members/<member_id>", methods=["DELETE"])
+@jwt_required
+@require_role("admin")
+def remove_team_member(member_id: str):
+    """
+    Permanently remove a team member.
+    Owner cannot be removed. Last admin rules prevent lockout.
+    """
+    try:
+        current = get_current_company()
+        company_id = str(current["company_id"])
+
+        # Protect owner
+        if member_id == company_id:
+            return jsonify({"success": False, "error": "Company owner cannot be removed"}), 400
+
+        member = None
+        try:
+            member = team_members_collection.find_one({
+                "_id": ObjectId(member_id),
+                "company_id": company_id
+            })
+        except Exception:
+            pass
+        if not member:
+            return jsonify({"success": False, "error": "Team member not found"}), 404
+
+        # Last admin lockout prevention
+        if member.get("role") == "admin":
+            admin_count = team_members_collection.count_documents({
+                "company_id": company_id,
+                "role": "admin",
+                "status": {"$ne": "disabled"}
+            })
+            if admin_count <= 1:
+                return jsonify({
+                    "success": False,
+                    "error": "Cannot remove the last remaining administrator"
+                }), 400
+
+        team_members_collection.delete_one({"_id": member["_id"]})
+
+        log_audit_event(
+            company_id=company_id,
+            action="team.remove",
+            target=member["email"],
+            details={"role": member.get("role")}
+        )
+
+        return jsonify({
+            "success": True,
+            "message": f"Team member {member['email']} removed"
+        }), 200
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": f"Failed to remove member: {str(e)}"}), 500
+
+# ── GET /api/settings/team/activity ───────────────────────────────────────────
+@settings_bp.route("/team/activity", methods=["GET"])
+@jwt_required
+@require_role("admin")
+def get_audit_activity():
+    """
+    Fetches the last 100 audit events for the company.
+    """
+    try:
+        current = get_current_company()
+        company_id = str(current["company_id"])
+
+        logs = []
+        for doc in audit_logs_collection.find({"company_id": company_id}).sort("ts", -1).limit(100):
+            ts = doc.get("ts")
+            if isinstance(ts, datetime):
+                ts = ts.isoformat()
+            logs.append({
+                "id": str(doc["_id"]),
+                "actor": doc.get("actor", {}),
+                "action": doc.get("action", ""),
+                "target": str(doc.get("target") or ""),
+                "details": doc.get("details", {}),
+                "ts": ts
+            })
+
+        return jsonify({
+            "success": True,
+            "logs": logs
+        }), 200
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": f"Failed to fetch activity logs: {str(e)}"}), 500

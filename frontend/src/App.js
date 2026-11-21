@@ -7,6 +7,7 @@ import DashboardLayout from "./components/layout/DashboardLayout";
 import Login from "./pages/auth/Login";
 import Register from "./pages/auth/Register";
 import VerifyOTP from "./pages/auth/VerifyOTP";
+import AcceptInvite from "./pages/auth/AcceptInvite";
 import Dashboard from "./pages/dashboard/Dashboard";
 import Jobs from "./pages/jobs/Jobs";
 import JobDetail from "./pages/jobs/JobDetail";
@@ -57,9 +58,10 @@ export default function App() {
         />
         <Routes>
           {/* Public routes */}
-          <Route path="/login"      element={<PublicRoute><Login /></PublicRoute>} />
-          <Route path="/register"   element={<PublicRoute><Register /></PublicRoute>} />
-          <Route path="/verify-otp" element={<PublicRoute><VerifyOTP /></PublicRoute>} />
+          <Route path="/login"         element={<PublicRoute><Login /></PublicRoute>} />
+          <Route path="/register"      element={<PublicRoute><Register /></PublicRoute>} />
+          <Route path="/verify-otp"    element={<PublicRoute><VerifyOTP /></PublicRoute>} />
+          <Route path="/accept-invite" element={<PublicRoute><AcceptInvite /></PublicRoute>} />
 
           {/* Candidate-facing interview link — no auth required */}
           <Route path="/interview/:token" element={<InterviewPortal />} />

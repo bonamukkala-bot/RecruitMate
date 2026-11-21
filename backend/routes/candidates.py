@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify
 from utils.db import candidates_collection, jobs_collection, audit_logs_collection
-from utils.auth_helper import jwt_required, get_current_company
+from utils.auth_helper import jwt_required, get_current_company, require_role, log_audit_event
 from utils.file_extractor import extract_text_from_file
 from agents.resume_screener import screen_resume
 from agents.question_generator import generate_questions
@@ -58,6 +58,7 @@ def get_all_candidates():
 # ── POST /api/candidates/<job_id>/screen — Screen via text ───────────────────
 @candidates_bp.route("/<job_id>/screen", methods=["POST"])
 @jwt_required
+@require_role("recruiter")
 def screen_candidate(job_id):
     company = get_current_company()
 
@@ -406,6 +407,7 @@ def export_candidates():
 # ── POST /api/candidates/compare — Candidate Comparison Tool ─────────────────
 @candidates_bp.route("/compare", methods=["POST"])
 @jwt_required
+@require_role("recruiter")
 def compare_candidates_route():
     company = get_current_company()
     body    = request.get_json() or {}
@@ -514,6 +516,7 @@ def get_candidate(candidate_id):
 # ── PATCH /api/candidates/detail/<candidate_id>/status ───────────────────────
 @candidates_bp.route("/detail/<candidate_id>/status", methods=["PATCH"])
 @jwt_required
+@require_role("recruiter")
 def update_status(candidate_id):
     company = get_current_company()
     body    = request.get_json()
@@ -537,6 +540,13 @@ def update_status(candidate_id):
         )
         if result.matched_count == 0:
             return jsonify({"success": False, "error": "Candidate not found"}), 404
+
+        log_audit_event(
+            company_id=company["company_id"],
+            action="candidate.status_change",
+            target=candidate_id,
+            details={"status": status}
+        )
 
         email_sent  = False
         email_error = None
@@ -570,6 +580,7 @@ def update_status(candidate_id):
 # ── POST /api/candidates/detail/<candidate_id>/review/approve ─────────────────
 @candidates_bp.route("/detail/<candidate_id>/review/approve", methods=["POST"])
 @jwt_required
+@require_role("admin")
 def approve_candidate_review(candidate_id):
     company = get_current_company()
     try:
@@ -607,18 +618,17 @@ def approve_candidate_review(candidate_id):
     )
 
     # Log audit entry
-    audit_logs_collection.insert_one({
-        "company_id"  : company["company_id"],
-        "user_email"  : company.get("email"),
-        "action"      : "candidate_review_approve",
-        "candidate_id": candidate_id,
-        "timestamp"   : now,
-        "details"     : {
+    log_audit_event(
+        company_id=company["company_id"],
+        action="candidate_review_approve",
+        target=candidate_id,
+        candidate_id=candidate_id,
+        details={
             "previous_status": candidate.get("status"),
             "new_status"     : "rejected",
             "email_sent"     : email_result.get("success", False)
         }
-    })
+    )
 
     updated_candidate = candidates_collection.find_one({"_id": cand_oid})
     return jsonify({
@@ -631,6 +641,7 @@ def approve_candidate_review(candidate_id):
 # ── POST /api/candidates/detail/<candidate_id>/review/override ────────────────
 @candidates_bp.route("/detail/<candidate_id>/review/override", methods=["POST"])
 @jwt_required
+@require_role("admin")
 def override_candidate_review(candidate_id):
     company = get_current_company()
     body    = request.get_json(silent=True) or {}
@@ -666,18 +677,17 @@ def override_candidate_review(candidate_id):
     )
 
     # Log audit entry
-    audit_logs_collection.insert_one({
-        "company_id"  : company["company_id"],
-        "user_email"  : company.get("email"),
-        "action"      : "candidate_review_override",
-        "candidate_id": candidate_id,
-        "timestamp"   : now,
-        "details"     : {
+    log_audit_event(
+        company_id=company["company_id"],
+        action="candidate_review_override",
+        target=candidate_id,
+        candidate_id=candidate_id,
+        details={
             "previous_status": candidate.get("status"),
             "new_status"     : target_status,
             "reason"         : reason
         }
-    })
+    )
 
     updated_candidate = candidates_collection.find_one({"_id": cand_oid})
     return jsonify({
@@ -689,6 +699,7 @@ def override_candidate_review(candidate_id):
 # ── DELETE /api/candidates/detail/<candidate_id> ─────────────────────────────
 @candidates_bp.route("/detail/<candidate_id>", methods=["DELETE"])
 @jwt_required
+@require_role("owner")
 def delete_candidate(candidate_id):
     company = get_current_company()
     try:
@@ -698,6 +709,12 @@ def delete_candidate(candidate_id):
         })
         if result.deleted_count == 0:
             return jsonify({"success": False, "error": "Candidate not found"}), 404
+
+        log_audit_event(
+            company_id=company["company_id"],
+            action="candidate.delete",
+            target=candidate_id
+        )
 
         return jsonify({"success": True, "message": "Candidate deleted"}), 200
     except Exception:

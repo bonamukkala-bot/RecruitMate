@@ -31,6 +31,7 @@ otp_collection        = db["otps"]
 company_settings_collection = db["company_settings"]
 audit_logs_collection = db["audit_logs"]
 llm_usage_collection  = db["llm_usage"]
+team_members_collection = db["team_members"]
 
 # ── Indexes ───────────────────────────────────────────────────────────────────
 def create_indexes():
@@ -49,6 +50,13 @@ def create_indexes():
             )
         except Exception as idx_err:
             print(f"⚠️ [llm_usage] Index creation warning (non-fatal): {idx_err}")
+        try:
+            team_members_collection.create_index([("email", ASCENDING)], unique=True)
+            team_members_collection.create_index([("company_id", ASCENDING)])
+            team_members_collection.create_index([("invite_token_hash", ASCENDING)])
+        except Exception as team_idx_err:
+            print(f"⚠️ [team_members] Index creation warning (non-fatal): {team_idx_err}")
+
         otp_collection.create_index(
             [("expires_at", ASCENDING)],
             expireAfterSeconds=0

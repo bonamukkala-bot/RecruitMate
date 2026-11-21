@@ -10,9 +10,17 @@ export function AuthProvider({ children }) {
   // ── Load from localStorage on mount ─────────────────────────────────────
   useEffect(() => {
     const token   = localStorage.getItem("token");
-    const company = localStorage.getItem("company");
-    if (token && company) {
-      setCompany(JSON.parse(company));
+    const stored = localStorage.getItem("company");
+    if (token && stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        setCompany({
+          ...parsed,
+          role: parsed.role || "owner"
+        });
+      } catch {
+        setCompany(null);
+      }
     }
     setLoading(false);
   }, []);
@@ -26,17 +34,17 @@ export function AuthProvider({ children }) {
     const data = res.data;
 
     if (data.success) {
+      const userObj = {
+        company_id  : data.company_id,
+        company_name: data.company_name,
+        email,
+        role        : data.role || "owner",
+        user_id     : data.user_id || data.company_id,
+        name        : data.name || ""
+      };
       localStorage.setItem("token",   data.token);
-      localStorage.setItem("company", JSON.stringify({
-        company_id  : data.company_id,
-        company_name: data.company_name,
-        email
-      }));
-      setCompany({
-        company_id  : data.company_id,
-        company_name: data.company_name,
-        email
-      });
+      localStorage.setItem("company", JSON.stringify(userObj));
+      setCompany(userObj);
     }
     return data;
   };
@@ -52,12 +60,14 @@ export function AuthProvider({ children }) {
     const res  = await authAPI.verifyOTP({ email, otp });
     const data = res.data;
     if (data.success) {
-      localStorage.setItem("token",   data.token);
-      localStorage.setItem("company", JSON.stringify({
+      const userObj = {
         company_name: data.company_name,
-        email
-      }));
-      setCompany({ company_name: data.company_name, email });
+        email,
+        role        : "owner"
+      };
+      localStorage.setItem("token",   data.token);
+      localStorage.setItem("company", JSON.stringify(userObj));
+      setCompany(userObj);
     }
     return data;
   };

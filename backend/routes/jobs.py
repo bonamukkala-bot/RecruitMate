@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify
 from utils.db import jobs_collection
-from utils.auth_helper import jwt_required, get_current_company
+from utils.auth_helper import jwt_required, get_current_company, require_role, log_audit_event
 from utils.file_extractor import extract_text_from_file
 from agents.jd_parser import parse_jd
 from datetime import datetime, timezone
@@ -20,6 +20,7 @@ def serialize_job(job: dict) -> dict:
 # ── POST /api/jobs/ — Create job (text OR file upload) ───────────────────────
 @jobs_bp.route("/", methods=["POST"])
 @jwt_required
+@require_role("recruiter")
 def create_job():
     company = get_current_company()
     jd_text = None
@@ -151,6 +152,7 @@ def get_job(job_id):
 # ── PATCH /api/jobs/<job_id>/status — Update job status ──────────────────────
 @jobs_bp.route("/<job_id>/status", methods=["PATCH"])
 @jwt_required
+@require_role("recruiter")
 def update_job_status(job_id):
     company = get_current_company()
     body    = request.get_json()
@@ -166,6 +168,14 @@ def update_job_status(job_id):
         )
         if result.matched_count == 0:
             return jsonify({"success": False, "error": "Job not found"}), 404
+
+        log_audit_event(
+            company_id=company["company_id"],
+            action="job.status_change",
+            target=job_id,
+            details={"status": status}
+        )
+
         return jsonify({"success": True, "message": f"Job status updated to '{status}'"}), 200
     except Exception:
         return jsonify({"success": False, "error": "Invalid job ID"}), 400
@@ -173,6 +183,7 @@ def update_job_status(job_id):
 # ── PATCH /api/jobs/<job_id> — Update job details / weights ──────────────────
 @jobs_bp.route("/<job_id>", methods=["PATCH"])
 @jwt_required
+@require_role("recruiter")
 def update_job(job_id):
     company = get_current_company()
     body    = request.get_json(silent=True) or {}
@@ -204,6 +215,7 @@ def update_job(job_id):
 # ── DELETE /api/jobs/<job_id> — Delete job ────────────────────────────────────
 @jobs_bp.route("/<job_id>", methods=["DELETE"])
 @jwt_required
+@require_role("owner")
 def delete_job(job_id):
     company = get_current_company()
     try:
@@ -213,12 +225,21 @@ def delete_job(job_id):
         })
         if result.deleted_count == 0:
             return jsonify({"success": False, "error": "Job not found"}), 404
+
+        log_audit_event(
+            company_id=company["company_id"],
+            action="job.delete",
+            target=job_id
+        )
+
         return jsonify({"success": True, "message": "Job deleted"}), 200
     except Exception:
         return jsonify({"success": False, "error": "Invalid job ID"}), 400
+
 # ── POST /api/jobs/generate-jd — AI generates JD from one line ───────────────
 @jobs_bp.route("/generate-jd", methods=["POST"])
 @jwt_required
+@require_role("recruiter")
 def generate_jd():
     body  = request.get_json()
     brief = body.get("brief", "").strip()

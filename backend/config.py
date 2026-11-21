@@ -49,3 +49,4 @@ class Config:
     BREVO_SENDER_EMAIL = os.getenv("BREVO_SENDER_EMAIL")
     BREVO_SENDER_NAME  = os.getenv("BREVO_SENDER_NAME")
     TURNSTILE_SECRET_KEY = os.getenv("TURNSTILE_SECRET_KEY")
+    FRONTEND_URL       = os.getenv("FRONTEND_URL") or "http://localhost:3000"

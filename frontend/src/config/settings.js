@@ -13,7 +13,8 @@ export const ENABLED_TABS = [
   "hiring",
   "interview",
   "email",
-  "ai"
+  "ai",
+  "team"
 ];
 
 export const SETTINGS_TABS = [

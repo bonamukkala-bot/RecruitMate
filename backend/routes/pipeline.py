@@ -2,7 +2,7 @@ import token
 
 from flask import Blueprint, request, jsonify
 from utils.db import candidates_collection, jobs_collection, pipeline_collection
-from utils.auth_helper import jwt_required, get_current_company
+from utils.auth_helper import jwt_required, get_current_company, require_role, log_audit_event
 from agents.email_sender import send_email, send_interview_link_email
 from agents.answer_evaluator import evaluate_answers
 from agents.ai_interview import start_interview, next_question, close_interview
@@ -39,6 +39,7 @@ def log_pipeline(company_id, candidate_id, job_id, agent, status, result):
 # ── POST /api/pipeline/send-email/<candidate_id> — Agent 4 ───────────────────
 @pipeline_bp.route("/send-email/<candidate_id>", methods=["POST"])
 @jwt_required
+@require_role("recruiter")
 def pipeline_send_email(candidate_id):
     company = get_current_company()
     body    = request.get_json() or {}
@@ -87,6 +88,7 @@ def pipeline_send_email(candidate_id):
 # ── POST /api/pipeline/evaluate/<candidate_id> — Agent 5 ─────────────────────
 @pipeline_bp.route("/evaluate/<candidate_id>", methods=["POST"])
 @jwt_required
+@require_role("recruiter")
 def pipeline_evaluate(candidate_id):
     company = get_current_company()
     body    = request.get_json()
@@ -131,6 +133,7 @@ def pipeline_evaluate(candidate_id):
 # ── POST /api/pipeline/interview/start/<candidate_id> — Agent 6 Start ────────
 @pipeline_bp.route("/interview/start/<candidate_id>", methods=["POST"])
 @jwt_required
+@require_role("recruiter")
 def pipeline_interview_start(candidate_id):
     company = get_current_company()
 
@@ -163,6 +166,7 @@ def pipeline_interview_start(candidate_id):
 # ── POST /api/pipeline/interview/next — Agent 6 Next ─────────────────────────
 @pipeline_bp.route("/interview/next", methods=["POST"])
 @jwt_required
+@require_role("recruiter")
 def pipeline_interview_next():
     body = request.get_json()
     required = {"current_question", "candidate_answer"}
@@ -179,6 +183,7 @@ def pipeline_interview_next():
 # ── POST /api/pipeline/interview/close/<candidate_id> — Agent 6 Close ────────
 @pipeline_bp.route("/interview/close/<candidate_id>", methods=["POST"])
 @jwt_required
+@require_role("recruiter")
 def pipeline_interview_close(candidate_id):
     company = get_current_company()
 
@@ -207,6 +212,7 @@ def pipeline_interview_close(candidate_id):
 # ── POST /api/pipeline/schedule/<candidate_id> — Agent 7 ─────────────────────
 @pipeline_bp.route("/schedule/<candidate_id>", methods=["POST"])
 @jwt_required
+@require_role("recruiter")
 def pipeline_schedule(candidate_id):
     company = get_current_company()
     body    = request.get_json(silent=True) or {}
@@ -335,6 +341,7 @@ def get_pipeline_logs(candidate_id):
 # ── POST /api/pipeline/interview/create/<candidate_id> ────────────────────────
 @pipeline_bp.route("/interview/create/<candidate_id>", methods=["POST"])
 @jwt_required
+@require_role("recruiter")
 def create_interview_link(candidate_id):
     company = get_current_company()
     try:
@@ -656,6 +663,7 @@ def submit_public_interview(token):
 # ── POST /api/pipeline/schedule-offline/<candidate_id> ────────────────────────
 @pipeline_bp.route("/schedule-offline/<candidate_id>", methods=["POST"])
 @jwt_required
+@require_role("recruiter")
 def schedule_offline_interview(candidate_id):
     company = get_current_company()
     body    = request.get_json() or {}
