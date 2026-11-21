@@ -479,14 +479,66 @@ def get_public_interview(token):
         company_logo = company_profile.get("logo") or ""
         company_display_name = company_profile.get("display_name") or candidate.get("company_name", "RecruitMate")
 
+        # Determine follow_up_mode (per-job override or company settings)
+        follow_up_mode = "off"
+        if job and job.get("follow_up_mode") in ("off", "adaptive"):
+            follow_up_mode = job.get("follow_up_mode")
+        else:
+            follow_up_mode = interview_settings.get("follow_up_mode", "off")
+
+        # Decision 4: Keep GET /interview/public/<token> unchanged when follow_up_mode is "off".
+        if follow_up_mode == "off":
+            return jsonify({
+                "success"             : True,
+                "candidate_name"      : candidate["candidate_name"],
+                "job_title"           : (job.get("job_title") or job.get("title", "")) if job else "",
+                "company_name"        : company_display_name,
+                "company_logo"        : company_logo,
+                "brand_color"         : brand_color,
+                "questions"           : final_questions,
+                "total"               : len(final_questions),
+                "duration_minutes"    : duration_minutes,
+                "per_question_seconds": per_question_seconds,
+                "proctoring"          : safe_proctoring,
+                "consent_text"        : consent_text,
+                "consent_required"    : True,
+                "record_proctoring_events": record_proctoring
+            }), 200
+
+        # In adaptive mode: return only active turn plus progress
+        from utils.adaptive_interview import (
+            initialize_interview_turns,
+            get_active_turn,
+            sanitize_turn_for_candidate
+        )
+        turns = candidate.get("interview_turns")
+        coverage = candidate.get("interview_coverage")
+
+        if not turns or not coverage:
+            turns, coverage = initialize_interview_turns(candidate, job, interview_settings)
+            candidates_collection.update_one(
+                {"_id": candidate["_id"]},
+                {"$set": {"interview_turns": turns, "interview_coverage": coverage}}
+            )
+
+        active = get_active_turn(turns)
+        progress = {
+            "current_core": (coverage.get("current_core_index", 0) + 1),
+            "total_core": len(final_questions),
+            "turns_completed": len([t for t in turns if t.get("answered_at") is not None]),
+            "follow_ups_on_current": coverage.get("follow_ups_on_current", 0)
+        }
+
         return jsonify({
             "success"             : True,
+            "follow_up_mode"      : "adaptive",
             "candidate_name"      : candidate["candidate_name"],
             "job_title"           : (job.get("job_title") or job.get("title", "")) if job else "",
             "company_name"        : company_display_name,
             "company_logo"        : company_logo,
             "brand_color"         : brand_color,
-            "questions"           : final_questions,
+            "active_turn"         : sanitize_turn_for_candidate(active, progress),
+            "progress"            : progress,
             "total"               : len(final_questions),
             "duration_minutes"    : duration_minutes,
             "per_question_seconds": per_question_seconds,
@@ -526,6 +578,71 @@ def record_public_interview_consent(token):
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
+# ── POST /api/pipeline/interview/public/<token>/turn ──────────────────────────
+@pipeline_bp.route("/interview/public/<token>/turn", methods=["POST"])
+def submit_public_interview_turn(token):
+    try:
+        candidate = candidates_collection.find_one({"interview_token": token})
+        if not candidate:
+            return jsonify({"success": False, "error": "Invalid link"}), 404
+
+        if candidate.get("interview_status") == "completed":
+            return jsonify({"success": False, "error": "Interview already completed"}), 400
+
+        exp = candidate.get("interview_token_exp")
+        if exp:
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) > exp:
+                return jsonify({"success": False, "error": "Interview link expired"}), 400
+
+        body = request.get_json(silent=True) or {}
+        turn_id = body.get("turn_id")
+        if not turn_id or not isinstance(turn_id, str):
+            return jsonify({"success": False, "error": "turn_id is required"}), 400
+
+        answer = body.get("answer", "")
+        if not isinstance(answer, str):
+            return jsonify({"success": False, "error": "answer must be a string"}), 400
+
+        from utils.settings import get_settings
+        interview_settings = get_settings(candidate.get("company_id", "")).get("interview", {})
+        job = jobs_collection.find_one({"_id": ObjectId(candidate["job_id"])}) if candidate.get("job_id") else None
+
+        # Ensure turns are initialized if not already
+        if not candidate.get("interview_turns"):
+            from utils.adaptive_interview import initialize_interview_turns
+            turns, coverage = initialize_interview_turns(candidate, job, interview_settings)
+            candidates_collection.update_one(
+                {"_id": candidate["_id"]},
+                {"$set": {"interview_turns": turns, "interview_coverage": coverage}}
+            )
+            candidate["interview_turns"] = turns
+            candidate["interview_coverage"] = coverage
+
+        from utils.adaptive_interview import process_turn_submission
+        is_finished, next_turn, progress, err = process_turn_submission(
+            candidate=candidate,
+            turn_id=turn_id,
+            answer=answer,
+            interview_settings=interview_settings,
+            job_data=job
+        )
+
+        if err:
+            return jsonify({"success": False, "error": err}), 400
+
+        return jsonify({
+            "success": True,
+            "finished": is_finished,
+            "active_turn": next_turn,
+            "progress": progress
+        }), 200
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
 # ── POST /api/pipeline/interview/public/<token>/submit ────────────────────────
 @pipeline_bp.route("/interview/public/<token>/submit", methods=["POST"])
 def submit_public_interview(token):
@@ -542,6 +659,14 @@ def submit_public_interview(token):
         integrity_log  = body.get("integrity_log", [])
         terminated     = body.get("terminated", False)
         termination_reason = body.get("termination_reason")
+
+        # In adaptive mode or if qa_pairs is empty, derive from interview_turns
+        if not qa_pairs and candidate.get("interview_turns"):
+            qa_pairs = [
+                {"question": t.get("question", ""), "answer": t.get("answer", "") or "(No answer provided)"}
+                for t in candidate.get("interview_turns", [])
+                if t.get("answer") is not None
+            ]
 
         # Verify candidate consent (mandatory before interview completion)
         has_consent = candidate.get("consent_accepted") or body.get("consent_accepted")
@@ -565,27 +690,25 @@ def submit_public_interview(token):
 
         job = jobs_collection.find_one({"_id": ObjectId(candidate["job_id"])})
 
-        # ── Terminated: skip evaluation entirely, save as-is ──────────────────
+        # ── Terminated: save transcript up to that point and skip evaluation ───
         if terminated:
+            update_fields = {
+                "interview_status"   : "completed",
+                "interview_answers"  : qa_pairs,
+                "integrity_log"      : integrity_log,
+                "terminated"         : True,
+                "termination_reason" : termination_reason,
+                "status"             : "terminated",
+                "recommendation"     : "Terminated",
+                "schedule_pending"   : False,
+                "updated_at"         : datetime.now(timezone.utc)
+            }
+            if candidate.get("interview_turns"):
+                update_fields["interview_turns"] = candidate.get("interview_turns")
+
             candidates_collection.update_one(
                 {"interview_token": token},
-                {"$set": {
-                    "interview_status"   : "completed",
-                    "interview_answers"  : qa_pairs,
-                    "integrity_log"      : integrity_log,
-                    "terminated"         : True,
-                    "termination_reason" : termination_reason,
-                    "status"             : "terminated",
-                    # Keep "recommendation" in sync with "status" so pages that
-                    # display the resume-screener's original verdict (e.g.
-                    # CandidateDetail's Match Score card) don't keep showing a
-                    # stale "Shortlist" from intake alongside a "terminated"
-                    # badge. Without this, the two fields silently diverge
-                    # the moment an interview gets cut off.
-                    "recommendation"     : "Terminated",
-                    "schedule_pending"   : False,
-                    "updated_at"         : datetime.now(timezone.utc)
-                }}
+                {"$set": update_fields}
             )
 
             log_pipeline(

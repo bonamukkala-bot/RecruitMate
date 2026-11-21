@@ -10,4 +10,5 @@ export const pipelineAPI = {
   schedule           : (candidateId, data) => api.post(`/pipeline/schedule/${candidateId}`, data),
   getLogs            : (candidateId)       => api.get(`/pipeline/logs/${candidateId}`),
   scheduleOffline: (candidateId, data) => api.post(`/pipeline/schedule-offline/${candidateId}`, data),
+  submitInterviewTurn: (token, data)   => api.post(`/pipeline/interview/public/${token}/turn`, data),
 };

@@ -97,6 +97,9 @@ DEFAULT_SETTINGS = {
         "question_count": 8,
         "difficulty": "medium",          # "easy" | "medium" | "hard" | "adaptive"
         "question_types": "mixed",       # "technical" | "behavioral" | "mixed"
+        "follow_up_mode": "off",         # "off" | "adaptive" (default "off")
+        "max_follow_ups_per_question": 2,# 0..3 (default 2)
+        "probe_depth": "standard",       # "light" | "standard" | "deep" (default "standard")
         "proctoring": {
             "enabled": True,
             "face_detection": True,
@@ -284,6 +287,18 @@ def validate_section(section: str, data: dict) -> tuple[bool, str | dict]:
         allowed_types = ["technical", "behavioral", "mixed"]
         if merged.get("question_types") not in allowed_types:
             return False, f"question_types must be one of {allowed_types}"
+
+        allowed_follow_up = ["off", "adaptive"]
+        if merged.get("follow_up_mode") not in allowed_follow_up:
+            return False, f"follow_up_mode must be one of {allowed_follow_up}"
+
+        max_fu = merged.get("max_follow_ups_per_question")
+        if not isinstance(max_fu, int) or max_fu < 0 or max_fu > 3:
+            return False, "max_follow_ups_per_question must be an integer between 0 and 3"
+
+        allowed_depths = ["light", "standard", "deep"]
+        if merged.get("probe_depth") not in allowed_depths:
+            return False, f"probe_depth must be one of {allowed_depths}"
 
         proctoring = merged.get("proctoring", {})
         if not isinstance(proctoring, dict):

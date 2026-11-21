@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import SettingsSection from "./SettingsSection";
 import { useSettings } from "../../context/SettingsContext";
 import Input from "../ui/Input";
-import { Mic, Clock, ShieldCheck } from "lucide-react";
+import { Mic, Clock, ShieldCheck, Sparkles } from "lucide-react";
 import toast from "react-hot-toast";
 
 const DEFAULT_INTERVIEW = {
@@ -10,6 +10,9 @@ const DEFAULT_INTERVIEW = {
   question_count: 8,
   difficulty: "medium",
   question_types: "mixed",
+  follow_up_mode: "off",
+  max_follow_ups_per_question: 2,
+  probe_depth: "standard",
   proctoring: {
     enabled: true,
     face_detection: true,
@@ -32,6 +35,9 @@ export default function InterviewSettings() {
         question_count: settings.interview.question_count ?? 8,
         difficulty: settings.interview.difficulty ?? "medium",
         question_types: settings.interview.question_types ?? "mixed",
+        follow_up_mode: settings.interview.follow_up_mode ?? "off",
+        max_follow_ups_per_question: settings.interview.max_follow_ups_per_question ?? 2,
+        probe_depth: settings.interview.probe_depth ?? "standard",
         proctoring: {
           enabled: settings.interview.proctoring?.enabled ?? true,
           face_detection: settings.interview.proctoring?.face_detection ?? true,
@@ -218,7 +224,77 @@ export default function InterviewSettings() {
           </div>
         </div>
 
-        {/* Section 3: Proctoring & Integrity */}
+        {/* Section 3: Adaptive Follow-Up Mode */}
+        <div className="space-y-4 pt-4 border-t border-stone-100">
+          <div className="flex items-center gap-2">
+            <Sparkles size={18} className="text-ledger-600" />
+            <h3 className="text-sm font-bold text-ink-500 uppercase tracking-wider font-display">
+              Adaptive Follow-Up Mode
+            </h3>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="p-4 bg-stone-50/70 rounded-xl border border-stone-200 space-y-2">
+              <label className="text-xs font-semibold text-stone-600 block">
+                Follow-Up Mode
+              </label>
+              <select
+                value={formData.follow_up_mode}
+                onChange={(e) => handleChange("follow_up_mode", e.target.value)}
+                className="input py-2 text-sm font-medium"
+              >
+                <option value="off">Off — Fixed question sequence (standard)</option>
+                <option value="adaptive">Adaptive — Dynamic probing based on answer quality</option>
+              </select>
+              <p className="text-[11px] text-stone-400">
+                When enabled, the interviewer evaluates each response in real time to ask targeted follow-ups.
+              </p>
+            </div>
+
+            <div className={`p-4 bg-stone-50/70 rounded-xl border border-stone-200 space-y-2 transition-opacity ${
+              formData.follow_up_mode === "adaptive" ? "opacity-100" : "opacity-40 pointer-events-none"
+            }`}>
+              <label className="text-xs font-semibold text-stone-600 block">
+                Max Follow-Ups per Core Question
+              </label>
+              <select
+                value={formData.max_follow_ups_per_question}
+                onChange={(e) => handleChange("max_follow_ups_per_question", parseInt(e.target.value, 10))}
+                className="input py-2 text-sm font-medium"
+              >
+                <option value={0}>0 — No follow-up questions</option>
+                <option value={1}>1 follow-up max</option>
+                <option value={2}>2 follow-ups max (recommended)</option>
+                <option value={3}>3 follow-ups max</option>
+              </select>
+              <p className="text-[11px] text-stone-400">
+                Upper limit of adaptive probes per topic before advancing to the next question.
+              </p>
+            </div>
+
+            <div className={`p-4 bg-stone-50/70 rounded-xl border border-stone-200 space-y-2 transition-opacity ${
+              formData.follow_up_mode === "adaptive" ? "opacity-100" : "opacity-40 pointer-events-none"
+            }`}>
+              <label className="text-xs font-semibold text-stone-600 block">
+                Probing Depth
+              </label>
+              <select
+                value={formData.probe_depth}
+                onChange={(e) => handleChange("probe_depth", e.target.value)}
+                className="input py-2 text-sm font-medium"
+              >
+                <option value="light">Light — Gentle clarification & high-level elaboration</option>
+                <option value="standard">Standard — Balanced trade-offs & technical specifics</option>
+                <option value="deep">Deep — Edge cases, failure modes & architectural scale</option>
+              </select>
+              <p className="text-[11px] text-stone-400">
+                Adjusts the rigor and depth of adaptive follow-up inquiries.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Section 4: Proctoring & Integrity */}
         <div className="space-y-4 pt-4 border-t border-stone-100">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
