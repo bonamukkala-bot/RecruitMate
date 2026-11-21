@@ -545,6 +545,7 @@ def get_public_interview(token):
             "proctoring"          : safe_proctoring,
             "consent_text"        : consent_text,
             "consent_required"    : True,
+            "consent_accepted"    : bool(candidate.get("consent_accepted", False)),
             "record_proctoring_events": record_proctoring
         }), 200
 

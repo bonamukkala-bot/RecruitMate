@@ -117,6 +117,17 @@ export default function InterviewPortal() {
   const [timeLeft,  setTimeLeft] = useState(120); // 2 min per question
   const [consentAccepted, setConsentAccepted] = useState(false);
 
+  // ── Adaptive interview state ──────────────────────────────────────────────
+  const [activeTurn,       setActiveTurn]       = useState(null);
+  const [progressData,     setProgressData]     = useState(null);
+  const [isSubmittingTurn, setIsSubmittingTurn] = useState(false);
+  const [turnError,        setTurnError]        = useState("");
+  const isSubmittingTurnRef = useRef(false);
+  const pendingAnswerRef    = useRef("");
+  const activeTurnRef       = useRef(null);
+  const progressDataRef     = useRef(null);
+  const interviewRef        = useRef(null);
+
   // ── Integrity monitoring state ────────────────────────────────────────────
   const [cameraReady,    setCameraReady]    = useState(false);
   const [cameraError,    setCameraError]    = useState("");
@@ -193,6 +204,20 @@ export default function InterviewPortal() {
         const res = await axios.get(`${API}/pipeline/interview/public/${token}`);
         if (res.data.success) {
           setInterview(res.data);
+          interviewRef.current = res.data;
+
+          if (res.data.follow_up_mode === "adaptive") {
+            setActiveTurn(res.data.active_turn);
+            activeTurnRef.current = res.data.active_turn;
+            if (res.data.progress) {
+              setProgressData(res.data.progress);
+              progressDataRef.current = res.data.progress;
+            }
+            if (res.data.consent_accepted) {
+              setConsentAccepted(true);
+            }
+          }
+
           const initialDuration = res.data.per_question_seconds || (
             res.data.duration_minutes
               ? Math.max(30, Math.floor((res.data.duration_minutes * 60) / Math.max(1, res.data.total || 8)))
@@ -372,7 +397,11 @@ export default function InterviewPortal() {
           clearInterval(verifyIntervalRef.current);
           setVerifyStatus("verified");
           setTimeout(() => {
-            askQuestion(0);
+            if (interviewRef.current?.follow_up_mode === "adaptive") {
+              askAdaptiveQuestion(activeTurnRef.current || interviewRef.current?.active_turn, true);
+            } else {
+              askQuestion(0);
+            }
           }, 1200);
         }
       } catch (err) {
@@ -546,6 +575,161 @@ export default function InterviewPortal() {
     synthRef.current.speak(utt);
   }, []);
 
+  // ── Submit interview ──────────────────────────────────────────────────────
+  const submitInterview = useCallback(async (finalAnswers) => {
+    setStage(STAGE.SUBMITTING);
+
+    clearInterval(detectionRef.current);
+    clearInterval(identityCheckIntervalRef.current);
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+    }
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    }
+
+    try {
+      const res = await axios.post(
+        `${API}/pipeline/interview/public/${token}/submit`,
+        {
+          qa_pairs: finalAnswers || [],
+          integrity_log: integrityLogRef.current,
+          consent_accepted: true
+        }
+      );
+      if (res.data.success) {
+        setResult(res.data);
+        setStage(STAGE.RESULT);
+      } else {
+        setError(res.data.error || "Submission failed");
+        setStage(STAGE.ERROR);
+      }
+    } catch (err) {
+      setError(err.response?.data?.error || "Submission failed");
+      setStage(STAGE.ERROR);
+    }
+  }, [token]);
+
+  // ── Ask question (Adaptive mode) ──────────────────────────────────────────
+  const askAdaptiveQuestion = useCallback((turn, isFirst = false) => {
+    if (!turn) return;
+    setTranscript("");
+    setStage(STAGE.SPEAKING);
+
+    const isFollowUp = ["probe_deeper", "probe_gap", "easier", "restate"].includes(turn.type);
+    let intro = "";
+    if (isFirst) {
+      intro = `Hello ${interviewRef.current?.candidate_name || ""}. Welcome to your interview for the ${interviewRef.current?.job_title || ""} position at ${interviewRef.current?.company_name || ""}. Please speak clearly after each question. Let's begin. `;
+    } else if (isFollowUp) {
+      intro = "Thank you. As a follow-up: ";
+    }
+
+    const text = `${intro}${turn.question}`;
+    speak(text, () => {
+      startListening();
+    });
+  }, [speak]);
+
+  // ── Submit adaptive turn ──────────────────────────────────────────────────
+  const submitAdaptiveTurn = useCallback(async (answerText) => {
+    if (isSubmittingTurnRef.current) return;
+    isSubmittingTurnRef.current = true;
+    setIsSubmittingTurn(true);
+    setTurnError("");
+    pendingAnswerRef.current = answerText;
+
+    if (recognRef.current) {
+      recognRef.current.stop();
+      recognRef.current = null;
+    }
+    clearInterval(timerRef.current);
+    synthRef.current?.cancel();
+
+    setStage(STAGE.PROCESSING);
+
+    try {
+      const currentTurnId = activeTurnRef.current?.turn_id || activeTurn?.turn_id;
+      const res = await axios.post(`${API}/pipeline/interview/public/${token}/turn`, {
+        turn_id: currentTurnId,
+        answer: answerText || "(No answer provided)"
+      });
+
+      if (res.data?.success) {
+        isSubmittingTurnRef.current = false;
+        setIsSubmittingTurn(false);
+        if (res.data.finished) {
+          submitInterview();
+        } else {
+          setActiveTurn(res.data.active_turn);
+          activeTurnRef.current = res.data.active_turn;
+          if (res.data.progress) {
+            setProgressData(res.data.progress);
+            progressDataRef.current = res.data.progress;
+          }
+          setTranscript("");
+          setStage(STAGE.NEXT);
+          setTimeout(() => {
+            askAdaptiveQuestion(res.data.active_turn, false);
+          }, 800);
+        }
+      } else {
+        isSubmittingTurnRef.current = false;
+        setIsSubmittingTurn(false);
+        setTurnError(res.data?.error || "Failed to submit answer. Please retry.");
+      }
+    } catch (err) {
+      isSubmittingTurnRef.current = false;
+      setIsSubmittingTurn(false);
+      setTurnError(err.response?.data?.error || "Network error submitting answer. Please click Retry.");
+    }
+  }, [token, activeTurn, submitInterview, askAdaptiveQuestion]);
+
+  // ── Next question (Standard / Off mode) ───────────────────────────────────
+  const handleNextQuestion = useCallback((currentTranscript) => {
+    if (recognRef.current) {
+      recognRef.current.stop();
+      recognRef.current = null;
+    }
+    clearInterval(timerRef.current);
+    synthRef.current?.cancel();
+
+    const answer = currentTranscript || transcript;
+    const q      = interview?.questions?.[currentQ];
+
+    const newAnswers = [...answers, {
+      question: q?.question || "",
+      answer  : answer.trim() || "(No answer provided)"
+    }];
+    setAnswers(newAnswers);
+    setTranscript("");
+
+    const nextIndex = currentQ + 1;
+
+    if (nextIndex >= (interview?.questions?.length || 0)) {
+      submitInterview(newAnswers);
+    } else {
+      setCurrentQ(nextIndex);
+      setStage(STAGE.NEXT);
+
+      setTimeout(() => {
+        speak(`Good. `, () => {
+          askQuestion(nextIndex);
+        });
+      }, 1000);
+    }
+  }, [transcript, answers, currentQ, interview, speak, submitInterview]);
+
+  // ── Unified Turn Dispatcher ───────────────────────────────────────────────
+  const submitCurrentAnswer = useCallback((currentTranscript) => {
+    const isAdaptive = interviewRef.current?.follow_up_mode === "adaptive";
+    const textToSubmit = (currentTranscript !== undefined ? currentTranscript : transcript).trim();
+    if (isAdaptive) {
+      submitAdaptiveTurn(textToSubmit);
+    } else {
+      handleNextQuestion(textToSubmit);
+    }
+  }, [transcript, submitAdaptiveTurn, handleNextQuestion]);
+
   // ── Speech recognition ────────────────────────────────────────────────────
   const startListening = useCallback(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -584,28 +768,29 @@ export default function InterviewPortal() {
     recog.start();
     setStage(STAGE.LISTENING);
 
-    const questionDuration = interview?.per_question_seconds || (
-      interview?.duration_minutes
-        ? Math.max(30, Math.floor((interview.duration_minutes * 60) / Math.max(1, interview.total || 8)))
+    const questionDuration = interviewRef.current?.per_question_seconds || (
+      interviewRef.current?.duration_minutes
+        ? Math.max(30, Math.floor((interviewRef.current.duration_minutes * 60) / Math.max(1, interviewRef.current.total || 8)))
         : 120
     );
     setTimeLeft(questionDuration);
+    clearInterval(timerRef.current);
     timerRef.current = setInterval(() => {
       setTimeLeft(prev => {
         if (prev <= 1) {
           clearInterval(timerRef.current);
-          handleNextQuestion(finalText);
+          submitCurrentAnswer(finalText);
           return 0;
         }
         return prev - 1;
       });
     }, 1000);
-  }, []);
+  }, [submitCurrentAnswer]);
 
-  // ── Ask current question ──────────────────────────────────────────────────
+  // ── Ask current question (Standard / Off mode) ────────────────────────────
   const askQuestion = useCallback((index) => {
     if (!interview) return;
-    const q = interview.questions[index];
+    const q = interview.questions?.[index];
     if (!q) return;
 
     setTranscript("");
@@ -621,75 +806,6 @@ export default function InterviewPortal() {
       startListening();
     });
   }, [interview, speak, startListening]);
-
-  // ── Next question ─────────────────────────────────────────────────────────
-  const handleNextQuestion = useCallback((currentTranscript) => {
-    if (recognRef.current) {
-      recognRef.current.stop();
-      recognRef.current = null;
-    }
-    clearInterval(timerRef.current);
-    synthRef.current.cancel();
-
-    const answer = currentTranscript || transcript;
-    const q      = interview.questions[currentQ];
-
-    const newAnswers = [...answers, {
-      question: q.question,
-      answer  : answer.trim() || "(No answer provided)"
-    }];
-    setAnswers(newAnswers);
-    setTranscript("");
-
-    const nextIndex = currentQ + 1;
-
-    if (nextIndex >= interview.questions.length) {
-      submitInterview(newAnswers);
-    } else {
-      setCurrentQ(nextIndex);
-      setStage(STAGE.NEXT);
-
-      setTimeout(() => {
-        speak(`Good. `, () => {
-          askQuestion(nextIndex);
-        });
-      }, 1000);
-    }
-  }, [transcript, answers, currentQ, interview, speak, askQuestion]);
-// ── Submit interview ──────────────────────────────────────────────────────
-  const submitInterview = async (finalAnswers) => {
-    setStage(STAGE.SUBMITTING);
-
-    clearInterval(detectionRef.current);
-    clearInterval(identityCheckIntervalRef.current);
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(t => t.stop());
-    }
-    if (document.fullscreenElement) {
-      document.exitFullscreen().catch(() => {});
-    }
-
-    try {
-      const res = await axios.post(
-        `${API}/pipeline/interview/public/${token}/submit`,
-        {
-          qa_pairs: finalAnswers,
-          integrity_log: integrityLogRef.current,
-          consent_accepted: true
-        }
-      );
-      if (res.data.success) {
-        setResult(res.data);
-        setStage(STAGE.RESULT);
-      } else {
-        setError(res.data.error || "Submission failed");
-        setStage(STAGE.ERROR);
-      }
-    } catch (err) {
-      setError(err.response?.data?.error || "Submission failed");
-      setStage(STAGE.ERROR);
-    }
-  };
 
   // ── Start interview ───────────────────────────────────────────────────────
   const startInterview = async () => {
@@ -720,13 +836,27 @@ export default function InterviewPortal() {
       // Fullscreen denied/unsupported — interview continues without it.
     }
 
-    await startCamera();
-    setStage(STAGE.VERIFYING);
+    const camOk = await startCamera();
+    if (camOk) {
+      setStage(STAGE.VERIFYING);
+    } else {
+      setTimeout(() => {
+        if (interviewRef.current?.follow_up_mode === "adaptive") {
+          askAdaptiveQuestion(activeTurnRef.current || interviewRef.current?.active_turn, true);
+        } else {
+          askQuestion(0);
+        }
+      }, 500);
+    }
   };
 
   // ── Skip / Next manually ──────────────────────────────────────────────────
   const handleSkip = () => {
-    handleNextQuestion(transcript);
+    submitCurrentAnswer("");
+  };
+
+  const handleRetryTurn = () => {
+    submitAdaptiveTurn(pendingAnswerRef.current);
   };
 
   // ── Cleanup ───────────────────────────────────────────────────────────────
@@ -1042,10 +1172,21 @@ export default function InterviewPortal() {
     );
   }
 
-  const question    = interview?.questions[currentQ];
+  const isAdaptive  = interview?.follow_up_mode === "adaptive";
+  const question    = isAdaptive ? activeTurn : interview?.questions?.[currentQ];
   const isListening = stage === STAGE.LISTENING;
   const isSpeaking  = stage === STAGE.SPEAKING;
-  const progress    = ((currentQ) / (interview?.total || 1)) * 100;
+  const isProcessing = stage === STAGE.PROCESSING;
+
+  const currentCoreNum = isAdaptive ? (progressData?.current_core || 1) : (currentQ + 1);
+  const totalCoreCount = isAdaptive ? (progressData?.total_core || interview?.total || 1) : (interview?.total || 1);
+  const progressPercent = isAdaptive
+    ? Math.min(100, Math.max(5, ((currentCoreNum - 1) / Math.max(1, totalCoreCount)) * 100))
+    : ((currentQ) / (interview?.total || 1)) * 100;
+
+  const isFollowUpTurn = isAdaptive && activeTurn && ["probe_deeper", "probe_gap", "easier", "restate"].includes(activeTurn.type);
+  const isWrapUpTurn   = isAdaptive && activeTurn?.type === "wrap_up";
+
   const mins        = Math.floor(timeLeft / 60);
   const secs        = timeLeft % 60;
 
@@ -1078,7 +1219,7 @@ export default function InterviewPortal() {
             </div>
           )}
           <span className="text-gray-400 text-sm">
-            {currentQ + 1} / {interview?.total}
+            {isAdaptive ? `Question ${currentCoreNum} of ${totalCoreCount}` : `${currentQ + 1} / ${interview?.total}`}
           </span>
         </div>
       </div>
@@ -1086,7 +1227,7 @@ export default function InterviewPortal() {
       <div className="h-1 bg-gray-800">
         <div
           className="h-full bg-blue-600 transition-all duration-500"
-          style={{ width: `${progress}%` }}
+          style={{ width: `${progressPercent}%` }}
         />
       </div>
 
@@ -1135,12 +1276,16 @@ export default function InterviewPortal() {
             ? "bg-blue-600 shadow-2xl shadow-blue-600/50 scale-110"
             : isListening
             ? "bg-green-600 shadow-2xl shadow-green-600/50"
+            : isProcessing
+            ? "bg-purple-600 shadow-2xl shadow-purple-600/50 animate-pulse"
             : "bg-gray-800"
         }`}>
           {isSpeaking
             ? <Volume2 size={40} className="text-white" />
             : isListening
             ? <Mic size={40} className="text-white" />
+            : isProcessing
+            ? <Loader size={40} className="text-white animate-spin" />
             : <Bot size={40} className="text-gray-400" />
           }
         </div>
@@ -1158,20 +1303,61 @@ export default function InterviewPortal() {
               Listening... speak now
             </div>
           )}
+          {isProcessing && (
+            <div className="flex items-center gap-2 text-purple-400 text-sm font-medium justify-center mb-2">
+              <div className="w-2 h-2 bg-purple-400 rounded-full animate-pulse" />
+              AI interviewer is thinking...
+            </div>
+          )}
         </div>
 
         <div className="mb-8">
           <Waveform active={isListening} />
         </div>
 
-        {question && (
+        {/* Thinking state card with Retry on network error */}
+        {isProcessing && (
+          <div className="w-full bg-gray-900 border border-gray-800 rounded-2xl p-6 mb-6 text-center space-y-4">
+            <p className="text-white font-medium">Analyzing your response...</p>
+            <p className="text-gray-500 text-xs">Formulating the next question</p>
+
+            {turnError && (
+              <div className="bg-red-950/40 border border-red-800/50 rounded-xl p-4 text-center space-y-3 max-w-sm mx-auto">
+                <p className="text-red-400 text-xs">{turnError}</p>
+                <button
+                  onClick={handleRetryTurn}
+                  disabled={isSubmittingTurn}
+                  className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold py-2 px-4 rounded-lg transition-all shadow-md shadow-blue-600/30 cursor-pointer"
+                >
+                  Retry Submission
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Question card (when not processing or when showing active question) */}
+        {!isProcessing && question && (
           <div className="w-full bg-gray-900 border border-gray-800 rounded-2xl p-6 mb-6">
             <div className="flex items-center gap-2 mb-3">
-              <span className="text-xs font-medium text-blue-400 bg-blue-400/10 px-2 py-0.5 rounded-full border border-blue-400/20">
-                Q{currentQ + 1}
-              </span>
+              {isFollowUpTurn ? (
+                <span className="text-xs font-semibold text-indigo-400 bg-indigo-500/10 px-2.5 py-0.5 rounded-full border border-indigo-500/20">
+                  Follow-up
+                </span>
+              ) : isWrapUpTurn ? (
+                <span className="text-xs font-semibold text-purple-400 bg-purple-500/10 px-2.5 py-0.5 rounded-full border border-purple-500/20">
+                  Wrap-up
+                </span>
+              ) : (
+                <span className="text-xs font-medium text-blue-400 bg-blue-400/10 px-2 py-0.5 rounded-full border border-blue-400/20">
+                  Q{currentCoreNum}
+                </span>
+              )}
               <span className="text-xs text-gray-500">
-                {question.id <= 3 ? "Technical" : question.id <= 6 ? "Behavioral" : "Gap-focused"}
+                {isAdaptive
+                  ? (isFollowUpTurn ? "Follow-up Question" : isWrapUpTurn ? "Final Overview" : "Core Question")
+                  : (question.id <= 3 ? "Technical" : question.id <= 6 ? "Behavioral" : "Gap-focused")
+                }
               </span>
             </div>
             <p className="text-white font-medium leading-relaxed">{question.question}</p>
@@ -1193,13 +1379,15 @@ export default function InterviewPortal() {
           <div className="flex gap-3 w-full">
             <button
               onClick={handleSkip}
-              className="flex-1 bg-gray-800 hover:bg-gray-700 text-white font-medium py-3 rounded-xl transition-all border border-gray-700 text-sm"
+              disabled={isSubmittingTurn}
+              className="flex-1 bg-gray-800 hover:bg-gray-700 text-white font-medium py-3 rounded-xl transition-all border border-gray-700 text-sm cursor-pointer disabled:opacity-50"
             >
               Skip Question
             </button>
             <button
-              onClick={() => handleNextQuestion(transcript)}
-              className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-blue-600/30"
+              onClick={() => submitCurrentAnswer(transcript)}
+              disabled={isSubmittingTurn}
+              className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-blue-600/30 cursor-pointer disabled:opacity-50"
             >
               Next Question <ChevronRight size={18} />
             </button>

@@ -311,6 +311,202 @@ function ScheduleOfflineForm({ candidateId, onScheduled }) {
   );
 }
 
+// ── Adaptive Threaded Transcript ──────────────────────────────────────────────
+function AdaptiveTranscriptView({ turns }) {
+  const [collapsed, setCollapsed] = useState(false);
+
+  if (!turns || turns.length === 0) return null;
+
+  // Group turns by core question
+  const coreGroups = [];
+  const wrapUpTurns = [];
+
+  turns.forEach((turn) => {
+    if (turn.type === "wrap_up") {
+      wrapUpTurns.push(turn);
+    } else if (turn.type === "core" || turn.parent_turn_id === null) {
+      coreGroups.push({
+        core: turn,
+        followUps: []
+      });
+    } else {
+      const currentGroup = coreGroups[coreGroups.length - 1];
+      if (currentGroup) {
+        currentGroup.followUps.push(turn);
+      } else {
+        coreGroups.push({ core: turn, followUps: [] });
+      }
+    }
+  });
+
+  const getVerdictBadge = (verdict) => {
+    if (!verdict) return null;
+    const v = String(verdict).toLowerCase();
+    const style =
+      v === "strong" ? "bg-verified-50 text-verified-700 border-verified-200" :
+      v === "partial" ? "bg-gold-50 text-gold-700 border-gold-200" :
+      v === "weak" ? "bg-brick-50 text-brick-700 border-brick-200" :
+      "bg-stone-100 text-stone-700 border-stone-300";
+    return (
+      <span className={`px-2 py-0.5 rounded text-xs font-semibold uppercase border ${style}`}>
+        {verdict}
+      </span>
+    );
+  };
+
+  const getFallbackBadge = (reason) => {
+    if (!reason || !String(reason).toLowerCase().includes("fallback")) return null;
+    return (
+      <span
+        className="px-2 py-0.5 rounded text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-300 flex items-center gap-1"
+        title={reason}
+      >
+        <AlertTriangle size={12} className="text-amber-600" />
+        Fallback Used
+      </span>
+    );
+  };
+
+  return (
+    <div className="card space-y-4">
+      <div className="flex items-center justify-between border-b border-stone-200 pb-3">
+        <button
+          onClick={() => setCollapsed(!collapsed)}
+          className="flex items-center gap-2 font-semibold text-ink-500 hover:text-ink-600 text-left cursor-pointer"
+        >
+          <MessageSquare size={16} className="text-ledger-500" />
+          <span>Adaptive Interview Transcript</span>
+          <span className="stamp text-ledger-600 ml-2" style={{ background: "rgba(31,110,88,0.08)" }}>
+            {turns.length} Turn{turns.length === 1 ? "" : "s"}
+          </span>
+          {collapsed ? <ChevronDown size={16} className="text-stone-400 ml-1" /> : <ChevronUp size={16} className="text-stone-400 ml-1" />}
+        </button>
+      </div>
+
+      {!collapsed && (
+        <div className="space-y-6 pt-1">
+          {coreGroups.map((group, idx) => {
+            const core = group.core;
+            return (
+              <div key={core.turn_id || idx} className="space-y-3">
+                {/* Core Question Card */}
+                <div className="p-4 bg-stone-50 rounded-xl border border-stone-200 space-y-3">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="px-2.5 py-0.5 bg-blue-100 text-blue-800 border border-blue-200 rounded-md text-xs font-bold">
+                        Core Q{idx + 1}
+                      </span>
+                      <span className="text-xs text-stone-500 uppercase tracking-wide font-mono">
+                        {core.type || "core"}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {getFallbackBadge(core._decider_reason)}
+                      {getVerdictBadge(core._verdict)}
+                      {core._score !== null && core._score !== undefined && (
+                        <span className="font-mono text-xs font-bold text-ink-500 bg-white px-2 py-0.5 rounded border border-stone-200">
+                          {core._score}/100
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="text-sm font-semibold text-ink-500 leading-relaxed">{core.question}</p>
+                    <div className="mt-2.5 pl-3 border-l-2 border-ledger-400 bg-white/60 p-2.5 rounded-r-lg">
+                      <p className="text-xs font-semibold text-stone-500 mb-1">Candidate Answer:</p>
+                      <p className="text-sm text-ink-400 whitespace-pre-wrap leading-relaxed">{core.answer || "(No answer provided)"}</p>
+                    </div>
+                  </div>
+
+                  {core._decider_reason && (
+                    <div className="p-2.5 bg-white rounded-lg border border-stone-200 text-xs text-stone-600">
+                      <span className="font-semibold text-stone-700 mr-1.5">Decider Assessment:</span>
+                      {core._decider_reason}
+                    </div>
+                  )}
+                </div>
+
+                {/* Follow-up Turns (Threaded & Indented) */}
+                {group.followUps.length > 0 && (
+                  <div className="ml-6 pl-4 border-l-2 border-indigo-200 space-y-3">
+                    {group.followUps.map((fu, fuIdx) => {
+                      const typeLabel =
+                        fu.type === "probe_deeper" ? "Probe (Deeper)" :
+                        fu.type === "probe_gap" ? "Probe (Gap)" :
+                        fu.type === "easier" ? "Simpler Question" :
+                        fu.type === "restate" ? "Clarification / Restate" :
+                        fu.type;
+
+                      return (
+                        <div key={fu.turn_id || fuIdx} className="p-3.5 bg-indigo-50/40 rounded-xl border border-indigo-100 space-y-2.5">
+                          <div className="flex items-center justify-between flex-wrap gap-2">
+                            <div className="flex items-center gap-2">
+                              <span className="px-2 py-0.5 bg-indigo-100 text-indigo-800 border border-indigo-200 rounded text-xs font-semibold">
+                                Follow-up {fuIdx + 1}
+                              </span>
+                              <span className="text-xs text-indigo-700 font-medium">
+                                {typeLabel}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {getFallbackBadge(fu._decider_reason)}
+                              {getVerdictBadge(fu._verdict)}
+                              {fu._score !== null && fu._score !== undefined && (
+                                <span className="font-mono text-xs font-bold text-ink-500 bg-white px-2 py-0.5 rounded border border-stone-200">
+                                  {fu._score}/100
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div>
+                            <p className="text-sm font-medium text-ink-500 leading-relaxed">{fu.question}</p>
+                            <div className="mt-2 pl-3 border-l-2 border-indigo-300 bg-white/70 p-2.5 rounded-r-lg">
+                              <p className="text-xs font-semibold text-stone-500 mb-1">Candidate Answer:</p>
+                              <p className="text-sm text-ink-400 whitespace-pre-wrap leading-relaxed">{fu.answer || "(No answer provided)"}</p>
+                            </div>
+                          </div>
+
+                          {fu._decider_reason && (
+                            <div className="p-2.5 bg-white rounded-lg border border-indigo-100 text-xs text-stone-600">
+                              <span className="font-semibold text-stone-700 mr-1.5">Decider Assessment:</span>
+                              {fu._decider_reason}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {/* Wrap-up Questions (if any) */}
+          {wrapUpTurns.map((wu, wuIdx) => (
+            <div key={wu.turn_id || wuIdx} className="p-4 bg-purple-50/50 rounded-xl border border-purple-200 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="px-2.5 py-0.5 bg-purple-100 text-purple-800 border border-purple-200 rounded-md text-xs font-bold">
+                  Wrap-up Question
+                </span>
+                <span className="text-xs text-stone-500 font-mono">wrap_up</span>
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-ink-500">{wu.question}</p>
+                <div className="mt-2.5 pl-3 border-l-2 border-purple-400 bg-white/60 p-2.5 rounded-r-lg">
+                  <p className="text-xs font-semibold text-stone-500 mb-1">Candidate Answer:</p>
+                  <p className="text-sm text-ink-400 whitespace-pre-wrap">{wu.answer || "(No answer provided)"}</p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main CandidateDetail ──────────────────────────────────────────────────────
 export default function CandidateDetail() {
   const { id }                        = useParams();
@@ -324,7 +520,7 @@ export default function CandidateDetail() {
   const [interviewLink, setInterviewLink] = useState(null);
   const [emailSent, setEmailSent] = useState(false);
 
-  const { isAdmin } = useRole();
+  const { isAdmin, hasMinRole } = useRole();
   const [exporting, setExporting] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [typedEmail, setTypedEmail] = useState("");
@@ -661,41 +857,48 @@ export default function CandidateDetail() {
         <ScheduleOfflineForm candidateId={id} onScheduled={fetchCandidate} />
       )}
 
-      {/* Interview Questions */}
-      <div className="card">
-        <button
-          onClick={() => setShowQs(!showQs)}
-          className="w-full flex items-center justify-between"
-        >
-          <h3 className="font-semibold text-ink-500 flex items-center gap-2">
-            <MessageSquare size={16} className="text-ledger-500" />
-            Interview Questions (8)
-          </h3>
-          {showQs ? <ChevronUp size={18} className="text-stone-500" /> : <ChevronDown size={18} className="text-stone-500" />}
-        </button>
+      {/* Adaptive Interview Transcript (Threaded) */}
+      {hasMinRole("viewer") && candidate.interview_turns && candidate.interview_turns.length > 0 && (
+        <AdaptiveTranscriptView turns={candidate.interview_turns} />
+      )}
 
-        {showQs && (
-          <div className="mt-4 space-y-4 animate-slide-down">
-            {["technical", "behavioral", "gap_focused"].map((cat) => (
-              <div key={cat}>
-                <p className="text-xs font-semibold text-stone-500 uppercase tracking-wider mb-2">
-                  {cat.replace("_", " ")}
-                </p>
-                <div className="space-y-2">
-                  {candidate.interview_questions?.[cat]?.map((q) => (
-                    <div key={q.id} className="p-3 bg-stone-50 rounded-lg border border-stone-200">
-                      <p className="text-sm text-ink-400">
-                        <span className="text-stone-500 mr-2 font-mono">Q{q.id}.</span>
-                        {q.question}
-                      </p>
-                    </div>
-                  ))}
+      {/* Interview Questions (Shown for 'off' mode or prior to adaptive interview execution) */}
+      {(!candidate.interview_turns || candidate.interview_turns.length === 0) && (
+        <div className="card">
+          <button
+            onClick={() => setShowQs(!showQs)}
+            className="w-full flex items-center justify-between"
+          >
+            <h3 className="font-semibold text-ink-500 flex items-center gap-2">
+              <MessageSquare size={16} className="text-ledger-500" />
+              Interview Questions (8)
+            </h3>
+            {showQs ? <ChevronUp size={18} className="text-stone-500" /> : <ChevronDown size={18} className="text-stone-500" />}
+          </button>
+
+          {showQs && (
+            <div className="mt-4 space-y-4 animate-slide-down">
+              {["technical", "behavioral", "gap_focused"].map((cat) => (
+                <div key={cat}>
+                  <p className="text-xs font-semibold text-stone-500 uppercase tracking-wider mb-2">
+                    {cat.replace("_", " ")}
+                  </p>
+                  <div className="space-y-2">
+                    {candidate.interview_questions?.[cat]?.map((q) => (
+                      <div key={q.id} className="p-3 bg-stone-50 rounded-lg border border-stone-200">
+                        <p className="text-sm text-ink-400">
+                          <span className="text-stone-500 mr-2 font-mono">Q{q.id}.</span>
+                          {q.question}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Evaluation Results */}
       {eval_data && (

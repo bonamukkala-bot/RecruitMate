@@ -29,6 +29,12 @@ def serialize_candidate(candidate: dict) -> dict:
         candidate["created_at"] = candidate["created_at"].isoformat()
     if isinstance(candidate.get("updated_at"), datetime):
         candidate["updated_at"] = candidate["updated_at"].isoformat()
+    if "interview_turns" in candidate and isinstance(candidate["interview_turns"], list):
+        for turn in candidate["interview_turns"]:
+            if isinstance(turn.get("asked_at"), datetime):
+                turn["asked_at"] = turn["asked_at"].isoformat()
+            if isinstance(turn.get("answered_at"), datetime):
+                turn["answered_at"] = turn["answered_at"].isoformat()
     return candidate
 
 # ── GET /api/candidates/ — Get ALL candidates for company ─────────────────────
