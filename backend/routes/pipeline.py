@@ -12,7 +12,13 @@ from bson import ObjectId
 import secrets
 from datetime import datetime, timezone, timedelta
 import os
-from agents.email_sender import send_email, send_interview_link_email, send_shortlist_offline_email, send_rejection_email
+from agents.email_sender import (
+    send_email,
+    send_interview_link_email,
+    send_shortlist_offline_email,
+    send_rejection_email,
+    send_owner_notification
+)
 
 pipeline_bp = Blueprint("pipeline", __name__)
 
@@ -526,6 +532,13 @@ def submit_public_interview(token):
                 {"reason": termination_reason, "flags": len(integrity_log)}
             )
 
+            send_owner_notification(candidate["company_id"], "interview_complete", {
+                "candidate_name": candidate.get("candidate_name", ""),
+                "job_title": job.get("job_title", "") if job else "",
+                "score": 0,
+                "status": "terminated"
+            })
+
             return jsonify({
                 "success"   : True,
                 "decision"  : "terminated",
@@ -618,6 +631,13 @@ def submit_public_interview(token):
                 "success" if email_sent else "failed",
                 email_result
             )
+
+        send_owner_notification(candidate["company_id"], "interview_complete", {
+            "candidate_name": candidate.get("candidate_name", ""),
+            "job_title": job.get("job_title", "") if job else "",
+            "score": overall_score,
+            "status": final_status
+        })
 
         return jsonify({
             "success"              : True,

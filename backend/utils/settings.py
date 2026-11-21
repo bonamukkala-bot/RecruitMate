@@ -3,6 +3,7 @@ import re
 from datetime import datetime, timezone
 from config import Config
 from utils.db import company_settings_collection
+from utils.email_renderer import validate_template_variables
 
 # ── Safety Check ─────────────────────────────────────────────────────────────
 # Refuse any standalone/script execution if pointed at production
@@ -236,7 +237,7 @@ def validate_section(section: str, data: dict) -> tuple[bool, str | dict]:
             return False, "sender_name must be a non-empty string under 100 characters"
 
         reply_to = merged.get("reply_to", "").strip()
-        if reply_to and not re.match(r"^[^@]+@[^@]+\.[^@]+$", reply_to):
+        if reply_to and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", reply_to):
             return False, "reply_to must be a valid email address or empty"
 
         templates = merged.get("templates", {})
@@ -247,13 +248,29 @@ def validate_section(section: str, data: dict) -> tuple[bool, str | dict]:
             t_obj = templates.get(tmpl)
             if not isinstance(t_obj, dict):
                 return False, f"templates.{tmpl} must be an object"
-            if not isinstance(t_obj.get("subject"), str) or len(t_obj.get("subject", "").strip()) == 0:
-                return False, f"templates.{tmpl}.subject cannot be empty"
-            if not isinstance(t_obj.get("body"), str) or len(t_obj.get("body", "").strip()) == 0:
-                return False, f"templates.{tmpl}.body cannot be empty"
+            
+            subject = t_obj.get("subject")
+            if not isinstance(subject, str) or len(subject.strip()) == 0 or len(subject) > 150:
+                return False, f"templates.{tmpl}.subject must be between 1 and 150 characters"
+            
+            body = t_obj.get("body")
+            if not isinstance(body, str) or len(body.strip()) == 0 or len(body) > 5000:
+                return False, f"templates.{tmpl}.body must be between 1 and 5000 characters"
 
-        if not isinstance(templates.get("otp_footer"), str):
-            return False, "templates.otp_footer must be a string"
+            is_valid_sub, sub_err = validate_template_variables(subject)
+            if not is_valid_sub:
+                return False, f"templates.{tmpl}.subject: {sub_err}"
+
+            is_valid_body, body_err = validate_template_variables(body)
+            if not is_valid_body:
+                return False, f"templates.{tmpl}.body: {body_err}"
+
+        otp_footer = templates.get("otp_footer")
+        if not isinstance(otp_footer, str) or len(otp_footer) > 500:
+            return False, "templates.otp_footer must be a string up to 500 characters"
+        is_valid_footer, footer_err = validate_template_variables(otp_footer)
+        if not is_valid_footer:
+            return False, f"templates.otp_footer: {footer_err}"
 
         notifications = merged.get("notifications", {})
         if not isinstance(notifications, dict):

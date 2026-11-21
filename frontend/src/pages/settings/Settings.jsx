@@ -6,6 +6,7 @@ import { ENABLED_TABS, SETTINGS_TABS } from "../../config/settings";
 import SettingsSection from "../../components/settings/SettingsSection";
 import HiringSettings from "../../components/settings/HiringSettings";
 import InterviewSettings from "../../components/settings/InterviewSettings";
+import EmailSettings from "../../components/settings/EmailSettings";
 import Input from "../../components/ui/Input";
 import Button from "../../components/ui/Button";
 import LoadingSpinner from "../../components/ui/LoadingSpinner";
@@ -288,8 +289,11 @@ export default function Settings() {
           {/* TAB: Interview */}
           {activeTab === "interview" && <InterviewSettings />}
 
+          {/* TAB: Email */}
+          {activeTab === "email" && <EmailSettings />}
+
           {/* Placeholder for future enabled tabs */}
-          {activeTab !== "security" && activeTab !== "hiring" && activeTab !== "interview" && (
+          {activeTab !== "security" && activeTab !== "hiring" && activeTab !== "interview" && activeTab !== "email" && (
             <SettingsSection
               title={currentTabObj.label}
               description={currentTabObj.description}

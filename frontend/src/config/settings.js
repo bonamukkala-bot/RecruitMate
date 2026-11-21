@@ -11,7 +11,8 @@ import {
 export const ENABLED_TABS = [
   "security",
   "hiring",
-  "interview"
+  "interview",
+  "email"
 ];
 
 export const SETTINGS_TABS = [

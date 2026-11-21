@@ -4,7 +4,7 @@ from utils.auth_helper import jwt_required, get_current_company
 from utils.file_extractor import extract_text_from_file
 from agents.resume_screener import screen_resume
 from agents.question_generator import generate_questions
-from agents.email_sender import send_rejection_email
+from agents.email_sender import send_rejection_email, send_owner_notification
 from agents.candidate_comparator import compare_candidates
 from datetime import datetime, timezone
 from bson import ObjectId
@@ -162,6 +162,11 @@ def screen_candidate(job_id):
         candidate_doc["updated_at"] = now.isoformat()
 
         if auto_reject_requires_approval:
+            send_owner_notification(company["company_id"], "pending_review", {
+                "candidate_name": candidate_name,
+                "job_title": job.get("job_title", ""),
+                "reason": candidate_doc.get("review_reason", "")
+            })
             return jsonify({
                 "success"       : True,
                 "message"       : "Candidate requires review before rejection",
@@ -184,6 +189,12 @@ def screen_candidate(job_id):
         )
 
         candidate_doc["email_sent"] = email_result.get("success", False)
+
+        send_owner_notification(company["company_id"], "new_candidate", {
+            "candidate_name": candidate_name,
+            "job_title": job.get("job_title", ""),
+            "match_score": match_score
+        })
 
         return jsonify({
             "success"     : True,
@@ -251,6 +262,12 @@ def screen_candidate(job_id):
     candidate_doc["_id"]        = str(inserted.inserted_id)
     candidate_doc["created_at"] = now.isoformat()
     candidate_doc["updated_at"] = now.isoformat()
+
+    send_owner_notification(company["company_id"], "new_candidate", {
+        "candidate_name": candidate_name,
+        "job_title": job.get("job_title", ""),
+        "match_score": match_score
+    })
 
     return jsonify({
         "success"     : True,

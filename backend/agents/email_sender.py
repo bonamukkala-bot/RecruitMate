@@ -2,6 +2,8 @@ import os
 import sys
 import json
 import re
+from datetime import datetime, timezone
+from bson import ObjectId
 import sib_api_v3_sdk
 from sib_api_v3_sdk.rest import ApiException
 from dotenv import load_dotenv
@@ -9,6 +11,9 @@ from langchain_groq import ChatGroq
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import Config
+from utils.settings import get_settings
+from utils.email_renderer import render_template, build_email_html
+from utils.db import companies_collection
 
 load_dotenv()
 
@@ -238,6 +243,12 @@ def generate_email_content(candidate_data: dict, job_data: dict, screen_data: di
 # ── Step 2: Send shortlist email via Brevo ────────────────────────────────────
 def send_email(candidate_data: dict, job_data: dict, screen_data: dict, company_name: str, from_email: str) -> dict:
     try:
+        company_id = candidate_data.get("company_id") if isinstance(candidate_data, dict) else None
+        settings = get_settings(company_id) if company_id else None
+        email_settings = settings.get("email", {}) if settings else {}
+        sender_name = email_settings.get("sender_name") or Config.BREVO_SENDER_NAME or _BREVO_SENDER_NAME
+        reply_to = email_settings.get("reply_to", "").strip() if email_settings else ""
+
         result = generate_email_content(candidate_data, job_data, screen_data, company_name)
         if not result["success"]:
             return result
@@ -245,15 +256,18 @@ def send_email(candidate_data: dict, job_data: dict, screen_data: dict, company_
         parts     = result["data"]
         html_body = _build_html(parts, company_name)
 
-        sender_email = from_email or _BREVO_SENDER_EMAIL
+        sender_email = from_email or Config.BREVO_SENDER_EMAIL or _BREVO_SENDER_EMAIL
 
-        send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
-            sender={"name": _BREVO_SENDER_NAME, "email": sender_email},
-            to=[{"email": candidate_data.get("candidate_email")}],
-            subject=parts["subject"],
-            html_content=html_body
-        )
+        send_params = {
+            "sender": {"name": sender_name, "email": sender_email},
+            "to": [{"email": candidate_data.get("candidate_email")}],
+            "subject": parts["subject"],
+            "html_content": html_body
+        }
+        if reply_to:
+            send_params["reply_to"] = {"email": reply_to}
 
+        send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(**send_params)
         response = _brevo_client.send_transac_email(send_smtp_email)
 
         return {
@@ -264,8 +278,12 @@ def send_email(candidate_data: dict, job_data: dict, screen_data: dict, company_
         }
 
     except ApiException as e:
-        return {"success": False, "error": f"Brevo API error: {e.reason}", "details": str(e.body)}
+        status_code = getattr(e, "status", None)
+        body = getattr(e, "body", str(e))
+        print(f"[Brevo Email] API Error - Status: {status_code}, Body: {body}")
+        return {"success": False, "error": f"Brevo API error: {status_code}", "details": str(body)}
     except Exception as e:
+        print(f"[Brevo Email] Unexpected error: {e}")
         return {"success": False, "error": str(e)}
 
 # ── Step 3: Generate interview invitation content via LLM ────────────────────
@@ -302,38 +320,73 @@ def generate_interview_email_content(candidate_data: dict, job_data: dict, compa
 # ── Step 4: Send interview invitation email via Brevo ─────────────────────────
 def send_interview_link_email(candidate_data: dict, job_data: dict, company_name: str, interview_url: str, from_email: str, matched_skills: list = None) -> dict:
     """
-    Generates a warm, LLM-written interview invitation and sends it via Brevo,
-    with the interview link embedded as a styled button + plain link.
+    Generates an interview invitation (using company's custom template if configured,
+    or LLM generation as fallback) and sends it via Brevo with the interview link.
     """
     try:
-        result = generate_interview_email_content(candidate_data, job_data, company_name, matched_skills or [])
-        if not result["success"]:
-            return result
+        company_id = candidate_data.get("company_id") if isinstance(candidate_data, dict) else None
+        settings = get_settings(company_id) if company_id else None
+        email_settings = settings.get("email", {}) if settings else {}
+        sender_name = email_settings.get("sender_name") or Config.BREVO_SENDER_NAME or _BREVO_SENDER_NAME
+        reply_to = email_settings.get("reply_to", "").strip() if email_settings else ""
+        templates = email_settings.get("templates", {}) if email_settings else {}
 
-        parts     = result["data"]
-        html_body = _build_interview_html(parts, company_name, interview_url)
+        subject = None
+        html_body = None
 
-        sender_email = from_email or _BREVO_SENDER_EMAIL
+        custom_invite = templates.get("interview_invite")
+        if custom_invite and isinstance(custom_invite, dict) and custom_invite.get("subject") and custom_invite.get("body"):
+            context = {
+                "candidate_name": candidate_data.get("candidate_name", "Candidate"),
+                "job_title": job_data.get("job_title", "") if job_data else "",
+                "company_name": company_name,
+                "next_step": "AI Voice Interview",
+                "date": datetime.now(timezone.utc).strftime("%B %d, %Y")
+            }
+            subject = render_template(custom_invite["subject"], context, escape_html=False)
+            rendered_body = render_template(custom_invite["body"], context, escape_html=False)
+            html_body = build_email_html(
+                rendered_body=rendered_body,
+                company_name=company_name,
+                button_text="Start Your Interview",
+                button_url=interview_url
+            )
+        else:
+            result = generate_interview_email_content(candidate_data, job_data, company_name, matched_skills or [])
+            if not result["success"]:
+                return result
+            parts = result["data"]
+            subject = parts["subject"]
+            html_body = _build_interview_html(parts, company_name, interview_url)
 
-        send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
-            sender={"name": _BREVO_SENDER_NAME, "email": sender_email},
-            to=[{"email": candidate_data.get("candidate_email")}],
-            subject=parts["subject"],
-            html_content=html_body
-        )
+        sender_email = from_email or Config.BREVO_SENDER_EMAIL or _BREVO_SENDER_EMAIL
 
+        send_params = {
+            "sender": {"name": sender_name, "email": sender_email},
+            "to": [{"email": candidate_data.get("candidate_email")}],
+            "subject": subject,
+            "html_content": html_body
+        }
+        if reply_to:
+            send_params["reply_to"] = {"email": reply_to}
+
+        send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(**send_params)
         response = _brevo_client.send_transac_email(send_smtp_email)
 
         return {
             "success" : True,
             "message" : "Interview invitation sent successfully",
             "email_id": response.message_id,
-            "subject" : parts["subject"]
+            "subject" : subject
         }
 
     except ApiException as e:
-        return {"success": False, "error": f"Brevo API error: {e.reason}", "details": str(e.body)}
+        status_code = getattr(e, "status", None)
+        body = getattr(e, "body", str(e))
+        print(f"[Brevo Email] API Error - Status: {status_code}, Body: {body}")
+        return {"success": False, "error": f"Brevo API error: {status_code}", "details": str(body)}
     except Exception as e:
+        print(f"[Brevo Email] Unexpected error: {e}")
         return {"success": False, "error": str(e)}
 
 # ── Prompts: Offline interview confirmation email ─────────────────────────────
@@ -403,34 +456,68 @@ def generate_offline_email_content(candidate_data: dict, job_data: dict, company
 # ── Step 6: Send offline interview confirmation email via Brevo ──────────────
 def send_shortlist_offline_email(candidate_data: dict, job_data: dict, company_name: str, interview_date: str, interview_time: str, location: str, from_email: str) -> dict:
     try:
-        result = generate_offline_email_content(candidate_data, job_data, company_name, interview_date, interview_time, location)
-        if not result["success"]:
-            return result
+        company_id = candidate_data.get("company_id") if isinstance(candidate_data, dict) else None
+        settings = get_settings(company_id) if company_id else None
+        email_settings = settings.get("email", {}) if settings else {}
+        sender_name = email_settings.get("sender_name") or Config.BREVO_SENDER_NAME or _BREVO_SENDER_NAME
+        reply_to = email_settings.get("reply_to", "").strip() if email_settings else ""
+        templates = email_settings.get("templates", {}) if email_settings else {}
 
-        parts     = result["data"]
-        html_body = _build_offline_html(parts, company_name, interview_date, interview_time, location)
+        subject = None
+        html_body = None
 
-        sender_email = from_email or _BREVO_SENDER_EMAIL
+        custom_shortlist = templates.get("shortlist")
+        if custom_shortlist and isinstance(custom_shortlist, dict) and custom_shortlist.get("subject") and custom_shortlist.get("body"):
+            context = {
+                "candidate_name": candidate_data.get("candidate_name", "Candidate"),
+                "job_title": job_data.get("job_title", "") if job_data else "",
+                "company_name": company_name,
+                "next_step": "In-person Interview",
+                "date": f"{interview_date} at {interview_time}"
+            }
+            subject = render_template(custom_shortlist["subject"], context, escape_html=False)
+            rendered_body = render_template(custom_shortlist["body"], context, escape_html=False)
+            html_body = build_email_html(
+                rendered_body=rendered_body,
+                company_name=company_name,
+                details_box=[("Date", interview_date), ("Time", interview_time), ("Location", location)]
+            )
+        else:
+            result = generate_offline_email_content(candidate_data, job_data, company_name, interview_date, interview_time, location)
+            if not result["success"]:
+                return result
+            parts = result["data"]
+            subject = parts["subject"]
+            html_body = _build_offline_html(parts, company_name, interview_date, interview_time, location)
 
-        send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
-            sender={"name": _BREVO_SENDER_NAME, "email": sender_email},
-            to=[{"email": candidate_data.get("candidate_email")}],
-            subject=parts["subject"],
-            html_content=html_body
-        )
+        sender_email = from_email or Config.BREVO_SENDER_EMAIL or _BREVO_SENDER_EMAIL
 
+        send_params = {
+            "sender": {"name": sender_name, "email": sender_email},
+            "to": [{"email": candidate_data.get("candidate_email")}],
+            "subject": subject,
+            "html_content": html_body
+        }
+        if reply_to:
+            send_params["reply_to"] = {"email": reply_to}
+
+        send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(**send_params)
         response = _brevo_client.send_transac_email(send_smtp_email)
 
         return {
             "success" : True,
             "message" : "Offline interview confirmation sent successfully",
             "email_id": response.message_id,
-            "subject" : parts["subject"]
+            "subject" : subject
         }
 
     except ApiException as e:
-        return {"success": False, "error": f"Brevo API error: {e.reason}", "details": str(e.body)}
+        status_code = getattr(e, "status", None)
+        body = getattr(e, "body", str(e))
+        print(f"[Brevo Email] API Error - Status: {status_code}, Body: {body}")
+        return {"success": False, "error": f"Brevo API error: {status_code}", "details": str(body)}
     except Exception as e:
+        print(f"[Brevo Email] Unexpected error: {e}")
         return {"success": False, "error": str(e)}
 
 # ── Step 7: Generate rejection email content via LLM ──────────────────────────
@@ -467,37 +554,183 @@ def generate_rejection_email_content(candidate_data: dict, job_data: dict, compa
 # ── Step 8: Send rejection email via Brevo ─────────────────────────────────────
 def send_rejection_email(candidate_data: dict, job_data: dict, company_name: str, from_email: str, stage: str = "resume screening") -> dict:
     """
-    Generates and sends a respectful rejection email.
-    `stage` should be either "resume screening" or "interview" so the LLM
-    can phrase the email appropriately without revealing any score.
+    Generates and sends a respectful rejection email using custom settings or LLM generation.
     """
     try:
-        result = generate_rejection_email_content(candidate_data, job_data, company_name, stage)
-        if not result["success"]:
-            return result
+        company_id = candidate_data.get("company_id") if isinstance(candidate_data, dict) else None
+        settings = get_settings(company_id) if company_id else None
+        email_settings = settings.get("email", {}) if settings else {}
+        sender_name = email_settings.get("sender_name") or Config.BREVO_SENDER_NAME or _BREVO_SENDER_NAME
+        reply_to = email_settings.get("reply_to", "").strip() if email_settings else ""
+        templates = email_settings.get("templates", {}) if email_settings else {}
 
-        parts     = result["data"]
-        html_body = _build_rejection_html(parts, company_name)
+        subject = None
+        html_body = None
 
-        sender_email = from_email or _BREVO_SENDER_EMAIL
+        custom_rejection = templates.get("rejection")
+        if custom_rejection and isinstance(custom_rejection, dict) and custom_rejection.get("subject") and custom_rejection.get("body"):
+            context = {
+                "candidate_name": candidate_data.get("candidate_name", "Candidate"),
+                "job_title": job_data.get("job_title", "") if job_data else "",
+                "company_name": company_name,
+                "next_step": "N/A",
+                "date": datetime.now(timezone.utc).strftime("%B %d, %Y")
+            }
+            subject = render_template(custom_rejection["subject"], context, escape_html=False)
+            rendered_body = render_template(custom_rejection["body"], context, escape_html=False)
+            html_body = build_email_html(
+                rendered_body=rendered_body,
+                company_name=company_name
+            )
+        else:
+            result = generate_rejection_email_content(candidate_data, job_data, company_name, stage)
+            if not result["success"]:
+                return result
+            parts = result["data"]
+            subject = parts["subject"]
+            html_body = _build_rejection_html(parts, company_name)
 
-        send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
-            sender={"name": _BREVO_SENDER_NAME, "email": sender_email},
-            to=[{"email": candidate_data.get("candidate_email")}],
-            subject=parts["subject"],
-            html_content=html_body
-        )
+        sender_email = from_email or Config.BREVO_SENDER_EMAIL or _BREVO_SENDER_EMAIL
 
+        send_params = {
+            "sender": {"name": sender_name, "email": sender_email},
+            "to": [{"email": candidate_data.get("candidate_email")}],
+            "subject": subject,
+            "html_content": html_body
+        }
+        if reply_to:
+            send_params["reply_to"] = {"email": reply_to}
+
+        send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(**send_params)
         response = _brevo_client.send_transac_email(send_smtp_email)
 
         return {
             "success" : True,
             "message" : "Rejection email sent successfully",
             "email_id": response.message_id,
-            "subject" : parts["subject"]
+            "subject" : subject
         }
 
     except ApiException as e:
-        return {"success": False, "error": f"Brevo API error: {e.reason}", "details": str(e.body)}
+        status_code = getattr(e, "status", None)
+        body = getattr(e, "body", str(e))
+        print(f"[Brevo Email] API Error - Status: {status_code}, Body: {body}")
+        return {"success": False, "error": f"Brevo API error: {status_code}", "details": str(body)}
     except Exception as e:
+        print(f"[Brevo Email] Unexpected error: {e}")
+        return {"success": False, "error": str(e)}
+
+# ── Step 9: Send owner notifications ───────────────────────────────────────────
+def send_owner_notification(company_id: str, event_type: str, details: dict) -> dict:
+    """
+    Sends an automated email notification to the company owner based on notification preferences.
+    event_type: "new_candidate" | "interview_complete" | "pending_review"
+    """
+    if not company_id:
+        return {"success": False, "error": "company_id required"}
+
+    try:
+        settings = get_settings(company_id)
+        email_settings = settings.get("email", {})
+        notifications = email_settings.get("notifications", {})
+
+        pref_map = {
+            "new_candidate": "notify_on_new_candidate",
+            "interview_complete": "notify_on_interview_complete",
+            "pending_review": "notify_on_pending_review"
+        }
+
+        pref_key = pref_map.get(event_type)
+        if pref_key and not notifications.get(pref_key, True):
+            print(f"[Owner Notification] Skipped {event_type} for company {company_id} (notification disabled)")
+            return {"success": True, "skipped": True, "reason": "Notification disabled"}
+
+        # Look up company owner email
+        queries = [{"company_id": str(company_id)}]
+        if ObjectId.is_valid(company_id):
+            queries.append({"_id": ObjectId(company_id)})
+        company = companies_collection.find_one({"$or": queries})
+
+        if not company or not company.get("email"):
+            print(f"[Owner Notification] No email found for company {company_id}")
+            return {"success": False, "error": "Company owner email not found"}
+
+        owner_email = company.get("email")
+        company_name = company.get("company_name", "RecruitMate AI")
+
+        if event_type == "new_candidate":
+            cand_name = details.get("candidate_name", "A candidate")
+            job_title = details.get("job_title", "Position")
+            score = details.get("match_score", "N/A")
+            subject = f"New Candidate Screened: {cand_name} ({job_title})"
+            body = (
+                f"Hello,\n\n"
+                f"A new candidate has applied and completed resume screening:\n\n"
+                f"• Candidate: {cand_name}\n"
+                f"• Role: {job_title}\n"
+                f"• Resume Match Score: {score}%\n\n"
+                f"Log in to your RecruitMate dashboard to review their details."
+            )
+        elif event_type == "interview_complete":
+            cand_name = details.get("candidate_name", "A candidate")
+            job_title = details.get("job_title", "Position")
+            score = details.get("score", "N/A")
+            status = str(details.get("status", "completed"))
+            subject = f"Interview Completed: {cand_name} ({job_title})"
+            body = (
+                f"Hello,\n\n"
+                f"Candidate {cand_name} has just completed their AI voice interview for {job_title}:\n\n"
+                f"• Candidate: {cand_name}\n"
+                f"• Score: {score}%\n"
+                f"• Outcome: {status.title()}\n\n"
+                f"Log in to your RecruitMate dashboard to review the full audio transcript and integrity logs."
+            )
+        elif event_type == "pending_review":
+            cand_name = details.get("candidate_name", "A candidate")
+            job_title = details.get("job_title", "Position")
+            reason = details.get("reason", "Needs manual decision")
+            subject = f"Action Required: Candidate Needs Review - {cand_name}"
+            body = (
+                f"Hello,\n\n"
+                f"A candidate requires your manual review before a final decision is made:\n\n"
+                f"• Candidate: {cand_name}\n"
+                f"• Role: {job_title}\n"
+                f"• Reason: {reason}\n\n"
+                f"Please visit the Candidates page and select 'Needs Review' to approve or override."
+            )
+        else:
+            return {"success": False, "error": f"Unknown event_type {event_type}"}
+
+        sender_name = email_settings.get("sender_name") or Config.BREVO_SENDER_NAME or _BREVO_SENDER_NAME
+        reply_to = email_settings.get("reply_to", "").strip()
+
+        html_content = build_email_html(body, company_name)
+
+        if not Config.BREVO_API_KEY:
+            print(f"[Owner Notification] BREVO_API_KEY not configured. Skipping email to {owner_email}")
+            return {"success": True, "mock": True}
+
+        sender_email = Config.BREVO_SENDER_EMAIL or _BREVO_SENDER_EMAIL
+        send_params = {
+            "sender": {"name": sender_name, "email": sender_email},
+            "to": [{"email": owner_email, "name": company_name}],
+            "subject": subject,
+            "html_content": html_content
+        }
+        if reply_to:
+            send_params["reply_to"] = {"email": reply_to}
+
+        send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(**send_params)
+        resp = _brevo_client.send_transac_email(send_smtp_email)
+        message_id = getattr(resp, "message_id", str(resp))
+        print(f"[Owner Notification] Sent {event_type} notification to {owner_email}. ID: {message_id}")
+        return {"success": True, "email_id": message_id}
+
+    except ApiException as e:
+        status_code = getattr(e, "status", None)
+        body = getattr(e, "body", str(e))
+        print(f"[Owner Notification] API Error - Status: {status_code}, Body: {body}")
+        return {"success": False, "error": f"Brevo API error ({status_code})"}
+    except Exception as e:
+        print(f"[Owner Notification] Unexpected error: {e}")
         return {"success": False, "error": str(e)}

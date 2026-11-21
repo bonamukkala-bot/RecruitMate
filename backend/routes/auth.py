@@ -13,6 +13,8 @@ import io
 import base64
 from bson import ObjectId
 from utils.auth_helper import jwt_required, get_current_company
+from utils.settings import get_settings
+import html
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -76,13 +78,18 @@ def verify_turnstile(token: str, remote_ip: str = None) -> bool:
         return False
 
 # ── Send OTP email via Brevo ──────────────────────────────────────────────────
-def send_otp_email(to_email: str, otp: str, company_name: str) -> tuple[bool, str]:
+def send_otp_email(to_email: str, otp: str, company_name: str, company_id: str = None) -> tuple[bool, str]:
     if not Config.BREVO_API_KEY:
         err = "BREVO_API_KEY is not configured"
         print(f"[Brevo OTP] Error: {err}")
         return False, err
 
     try:
+        settings = get_settings(company_id) if company_id else None
+        footer_text = "This code expires in 5 minutes. Do not share it with anyone."
+        if settings:
+            footer_text = settings.get("email", {}).get("templates", {}).get("otp_footer") or footer_text
+
         configuration         = sib_api_v3_sdk.Configuration()
         configuration.api_key["api-key"] = Config.BREVO_API_KEY
 
@@ -90,10 +97,13 @@ def send_otp_email(to_email: str, otp: str, company_name: str) -> tuple[bool, st
             sib_api_v3_sdk.ApiClient(configuration)
         )
 
+        escaped_company = html.escape(company_name)
+        escaped_footer = html.escape(footer_text)
+
         html_content = f"""
         <div style="font-family: Arial, sans-serif; max-width: 500px; margin: auto; padding: 32px;">
             <h2 style="color: #1f2937;">Welcome to RecruitMate AI</h2>
-            <p>Hi <strong>{company_name}</strong>,</p>
+            <p>Hi <strong>{escaped_company}</strong>,</p>
             <p>Your email verification code is:</p>
             <div style="font-size: 36px; font-weight: bold; color: #2563eb;
                         letter-spacing: 8px; padding: 16px; background: #f3f4f6;
@@ -101,7 +111,7 @@ def send_otp_email(to_email: str, otp: str, company_name: str) -> tuple[bool, st
                 {otp}
             </div>
             <p style="color: #6b7280; margin-top: 16px;">
-                This code expires in <strong>5 minutes</strong>. Do not share it with anyone.
+                {escaped_footer}
             </p>
             <p style="color: #6b7280;">— RecruitMate AI Team</p>
         </div>
