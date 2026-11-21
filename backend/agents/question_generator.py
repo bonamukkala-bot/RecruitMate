@@ -15,12 +15,52 @@ _llm = ChatGroq(
     api_key=Config.GROQ_API_KEY,
     model_name=Config.GROQ_MODEL,
     temperature=0.7,
-    max_tokens=2048
+    max_tokens=4096
 )
 
 _SYSTEM = "You are a senior technical interviewer. Return ONLY valid JSON. No markdown, no explanation."
 
-_TEMPLATE = """Generate 8 personalized interview questions for this specific candidate.
+def _get_category_distribution(total_count: int, question_types: str) -> dict:
+    """Determine how many questions belong to each category based on settings."""
+    q_type = (question_types or "mixed").lower()
+    if q_type == "technical":
+        return {"technical": total_count, "behavioral": 0, "gap_focused": 0}
+    if q_type == "behavioral":
+        return {"technical": 0, "behavioral": total_count, "gap_focused": 0}
+
+    # "mixed" mode distribution:
+    gap_count = max(1, total_count // 4)
+    remaining = total_count - gap_count
+    tech_count = remaining // 2 + (remaining % 2)
+    beh_count = remaining - tech_count
+    return {
+        "technical": tech_count,
+        "behavioral": beh_count,
+        "gap_focused": gap_count
+    }
+
+def _build_prompt(
+    candidate_name: str,
+    job_title: str,
+    matched_skills: str,
+    missing_skills: str,
+    reasoning: str,
+    question_count: int,
+    difficulty: str,
+    question_types: str
+) -> str:
+    dist = _get_category_distribution(question_count, question_types)
+    cat_desc = []
+    if dist["technical"] > 0:
+        cat_desc.append(f"- technical: {dist['technical']} questions probing deep technical and matched skills")
+    if dist["behavioral"] > 0:
+        cat_desc.append(f"- behavioral: {dist['behavioral']} questions evaluating teamwork, communication, and soft skills")
+    if dist["gap_focused"] > 0:
+        cat_desc.append(f"- gap_focused: {dist['gap_focused']} questions constructively exploring missing skills or growth areas")
+
+    categories_text = "\n".join(cat_desc)
+
+    return f"""Generate exactly {question_count} personalized interview questions for this specific candidate.
 DO NOT generate generic questions — tailor every question to their profile.
 
 CANDIDATE NAME: {candidate_name}
@@ -28,30 +68,26 @@ JOB TITLE: {job_title}
 MATCHED SKILLS: {matched_skills}
 MISSING SKILLS: {missing_skills}
 SCREENING REASONING: {reasoning}
+INTERVIEW DIFFICULTY: {difficulty} (calibrate question complexity, technical depth, and evaluation rigor accordingly)
+QUESTION TYPES FOCUS: {question_types}
 
-Question categories:
-- technical    : test their strong/matched skills deeply
-- behavioral   : assess soft skills and teamwork
-- gap_focused  : probe their missing skills without being harsh
+Required question distribution:
+{categories_text}
 
-Return ONLY this JSON shape — exactly 8 questions total, no markdown fences:
+Return ONLY this JSON shape — exactly {question_count} questions total, no markdown fences:
 {{
   "candidate_name": "{candidate_name}",
   "job_title": "{job_title}",
+  "difficulty": "{difficulty}",
   "questions": {{
     "technical": [
-      {{"id": 1, "question": "string"}},
-      {{"id": 2, "question": "string"}},
-      {{"id": 3, "question": "string"}}
+      {{"id": 1, "question": "string"}}
     ],
     "behavioral": [
-      {{"id": 4, "question": "string"}},
-      {{"id": 5, "question": "string"}},
-      {{"id": 6, "question": "string"}}
+      {{"id": 2, "question": "string"}}
     ],
     "gap_focused": [
-      {{"id": 7, "question": "string"}},
-      {{"id": 8, "question": "string"}}
+      {{"id": 3, "question": "string"}}
     ]
   }}
 }}"""
@@ -73,51 +109,112 @@ def _clean(text: str) -> str:
     return cleaned.strip()
 
 # ── Main public function ─────────────────────────────────────────────────────
-def generate_questions(candidate_data: dict, job_data: dict, screen_data: dict) -> dict:
+def generate_questions(
+    candidate_data: dict,
+    job_data: dict,
+    screen_data: dict,
+    question_count: int = 8,
+    difficulty: str = "medium",
+    question_types: str = "mixed",
+    interview_settings: dict = None
+) -> dict:
     """
-    Input  : candidate_data, job_data (from parse_jd), screen_data (from screen_resume)
+    Input  : candidate_data, job_data (from parse_jd), screen_data (from screen_resume),
+             optional question_count (3-20), difficulty (easy/medium/hard/adaptive),
+             question_types (technical/behavioral/mixed), or interview_settings dict.
     Output : {"success": True,  "data": {...}}
            | {"success": False, "error": "...", "raw_response": "..."}
     """
     raw = ""
     try:
+        candidate_data = candidate_data or {}
+        job_data = job_data or {}
+        screen_data = screen_data or {}
+
+        if interview_settings and isinstance(interview_settings, dict):
+            question_count = interview_settings.get("question_count", question_count)
+            difficulty = interview_settings.get("difficulty", difficulty)
+            question_types = interview_settings.get("question_types", question_types)
+
+        # Enforce bounds
+        count = max(3, min(20, int(question_count or 8)))
+        diff = (difficulty or "medium").lower()
+        if diff not in ["easy", "medium", "hard", "adaptive"]:
+            diff = "medium"
+        q_types = (question_types or "mixed").lower()
+        if q_types not in ["technical", "behavioral", "mixed"]:
+            q_types = "mixed"
+
+        prompt = _build_prompt(
+            candidate_name=candidate_data.get("candidate_name", "Candidate"),
+            job_title=job_data.get("job_title", ""),
+            matched_skills=", ".join(screen_data.get("matched_skills", [])),
+            missing_skills=", ".join(screen_data.get("missing_skills", [])),
+            reasoning=screen_data.get("reasoning", ""),
+            question_count=count,
+            difficulty=diff,
+            question_types=q_types
+        )
+
         resp = _llm.invoke(
             [
                 {"role": "system", "content": _SYSTEM},
-                {"role": "user",   "content": _TEMPLATE.format(
-                    candidate_name=candidate_data.get("candidate_name", "Candidate"),
-                    job_title=job_data.get("job_title", ""),
-                    matched_skills=", ".join(screen_data.get("matched_skills", [])),
-                    missing_skills=", ".join(screen_data.get("missing_skills", [])),
-                    reasoning=screen_data.get("reasoning", "")
-                )}
+                {"role": "user",   "content": prompt}
             ]
         )
         raw = resp.content or ""
         cleaned = _clean(raw)
         if not cleaned:
-            raise ValueError("Empty response received from LLM.")
+            return {"success": False, "error": "Empty or truncated response received from LLM.", "raw_response": raw}
 
-        parsed = json.loads(cleaned)
+        try:
+            parsed = json.loads(cleaned)
+        except json.JSONDecodeError as json_err:
+            return {
+                "success": False,
+                "error": f"LLM returned truncated or invalid JSON: {json_err}",
+                "raw_response": raw
+            }
 
         missing = _REQUIRED - parsed.keys()
         if missing:
-            raise ValueError(f"LLM omitted required fields: {missing}")
+            return {
+                "success": False,
+                "error": f"LLM response omitted required fields: {missing}",
+                "raw_response": raw
+            }
 
-        missing_cats = _CATEGORIES - parsed["questions"].keys()
-        if missing_cats:
-            raise ValueError(f"LLM omitted question categories: {missing_cats}")
+        if not isinstance(parsed.get("questions"), dict):
+            return {
+                "success": False,
+                "error": "LLM response questions field must be a dictionary of categories",
+                "raw_response": raw
+            }
 
+        # Normalize categories to ensure all exist
+        for cat in _CATEGORIES:
+            if cat not in parsed["questions"] or not isinstance(parsed["questions"][cat], list):
+                parsed["questions"][cat] = []
+
+        # Count questions
         total = sum(len(parsed["questions"][c]) for c in _CATEGORIES)
-        if total != 8:
-            raise ValueError(f"Expected 8 questions, got {total}")
+        if total == 0:
+            return {
+                "success": False,
+                "error": "LLM did not generate any interview questions",
+                "raw_response": raw
+            }
+
+        parsed["total"] = total
+        parsed["question_count"] = count
+        parsed["difficulty"] = diff
+        parsed["question_types"] = q_types
 
         return {"success": True, "data": parsed}
 
-    except json.JSONDecodeError as e:
-        print(f"❌ [question_generator] JSON parse failed: {e}\nRaw output: {raw}")
-        return {"success": False, "error": f"JSON parse failed: {e}", "raw_response": raw}
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(f"❌ [question_generator] Error: {e}")
         return {"success": False, "error": str(e), "raw_response": raw}
 

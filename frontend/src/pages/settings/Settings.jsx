@@ -5,6 +5,7 @@ import { authAPI } from "../../api/auth";
 import { ENABLED_TABS, SETTINGS_TABS } from "../../config/settings";
 import SettingsSection from "../../components/settings/SettingsSection";
 import HiringSettings from "../../components/settings/HiringSettings";
+import InterviewSettings from "../../components/settings/InterviewSettings";
 import Input from "../../components/ui/Input";
 import Button from "../../components/ui/Button";
 import LoadingSpinner from "../../components/ui/LoadingSpinner";
@@ -284,8 +285,11 @@ export default function Settings() {
           {/* TAB: Hiring Rules */}
           {activeTab === "hiring" && <HiringSettings />}
 
+          {/* TAB: Interview */}
+          {activeTab === "interview" && <InterviewSettings />}
+
           {/* Placeholder for future enabled tabs */}
-          {activeTab !== "security" && activeTab !== "hiring" && (
+          {activeTab !== "security" && activeTab !== "hiring" && activeTab !== "interview" && (
             <SettingsSection
               title={currentTabObj.label}
               description={currentTabObj.description}

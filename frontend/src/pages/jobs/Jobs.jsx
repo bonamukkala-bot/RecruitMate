@@ -29,6 +29,11 @@ function CreateJobModal({ isOpen, onClose, onCreated }) {
     projects: 15
   });
 
+  // Interview settings override configuration
+  const [useCompanyInterviewSettings, setUseCompanyInterviewSettings] = useState(true);
+  const [jobQuestionCount, setJobQuestionCount] = useState(8);
+  const [jobDifficulty, setJobDifficulty] = useState("medium");
+
   const totalWeight =
     (scoringWeights.skills || 0) +
     (scoringWeights.experience || 0) +
@@ -60,13 +65,22 @@ function CreateJobModal({ isOpen, onClose, onCreated }) {
       toast.error(`Scoring weights must sum to 100% (currently ${totalWeight}%)`);
       return;
     }
+    if (!useCompanyInterviewSettings) {
+      if (jobQuestionCount < 3 || jobQuestionCount > 20) {
+        toast.error("Question count must be between 3 and 20");
+        return;
+      }
+    }
 
     setLoading(true);
     try {
       let res;
       const jobOptions = {
         use_company_weights: useCompanyWeights,
-        scoring_weights: useCompanyWeights ? undefined : scoringWeights
+        scoring_weights: useCompanyWeights ? undefined : scoringWeights,
+        use_company_interview_settings: useCompanyInterviewSettings,
+        question_count: useCompanyInterviewSettings ? undefined : jobQuestionCount,
+        difficulty: useCompanyInterviewSettings ? undefined : jobDifficulty
       };
 
       if (inputMode === "file" && file) {
@@ -303,6 +317,62 @@ function CreateJobModal({ isOpen, onClose, onCreated }) {
                     />
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Interview rules override */}
+        <div className="pt-3 border-t border-stone-200 space-y-3">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-semibold text-ink-500 uppercase tracking-wider">
+              Interview Rules & Difficulty
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer text-xs text-stone-600 font-medium">
+              <input
+                type="checkbox"
+                checked={useCompanyInterviewSettings}
+                onChange={(e) => setUseCompanyInterviewSettings(e.target.checked)}
+                className="w-3.5 h-3.5 rounded border-stone-300 text-ledger-600 focus:ring-ledger-200 cursor-pointer"
+              />
+              <span>Use company defaults</span>
+            </label>
+          </div>
+
+          {!useCompanyInterviewSettings && (
+            <div className="p-3 bg-stone-50 rounded-xl border border-stone-200 space-y-3 animate-fade-in">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] font-medium text-stone-500 block mb-1">
+                    Question Count (3 - 20)
+                  </label>
+                  <input
+                    type="number"
+                    min="3"
+                    max="20"
+                    value={jobQuestionCount}
+                    onChange={(e) => {
+                      const val = Math.max(3, Math.min(20, parseInt(e.target.value, 10) || 3));
+                      setJobQuestionCount(val);
+                    }}
+                    className="input py-1.5 px-3 text-xs font-mono font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-medium text-stone-500 block mb-1">
+                    Interview Difficulty
+                  </label>
+                  <select
+                    value={jobDifficulty}
+                    onChange={(e) => setJobDifficulty(e.target.value)}
+                    className="input py-1.5 px-3 text-xs font-medium"
+                  >
+                    <option value="easy">Easy</option>
+                    <option value="medium">Medium</option>
+                    <option value="hard">Hard</option>
+                    <option value="adaptive">Adaptive</option>
+                  </select>
+                </div>
               </div>
             </div>
           )}

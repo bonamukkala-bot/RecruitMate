@@ -192,6 +192,12 @@ export default function InterviewPortal() {
         const res = await axios.get(`${API}/pipeline/interview/public/${token}`);
         if (res.data.success) {
           setInterview(res.data);
+          const initialDuration = res.data.per_question_seconds || (
+            res.data.duration_minutes
+              ? Math.max(30, Math.floor((res.data.duration_minutes * 60) / Math.max(1, res.data.total || 8)))
+              : 120
+          );
+          setTimeLeft(initialDuration);
           setStage(STAGE.INTRO);
         } else {
           setError(res.data.error || "Invalid interview link");
@@ -276,9 +282,12 @@ export default function InterviewPortal() {
   }, [token]);
 
   // ── Register a strike (phone / tab-switch / fullscreen-exit) ─────────────
-  // 1st strike -> warning overlay. 2nd strike -> terminate immediately.
   const registerStrike = useCallback((type) => {
     if (!ACTIVE_STAGES.includes(stageRef.current)) return;
+
+    const proctoring = interview?.proctoring || {};
+    if (proctoring.enabled === false) return;
+    if (type === "fullscreen_exit" && proctoring.fullscreen_required === false) return;
 
     const now = Date.now();
     if (now - lastStrikeAtRef.current < STRIKE_COOLDOWN_MS) return; // debounce
@@ -288,18 +297,29 @@ export default function InterviewPortal() {
     strikeCountRef.current += 1;
 
     const label = VIOLATION_LABELS[type] || "A policy violation was detected.";
+    const allowedViolations = proctoring.tab_switch_violations_allowed !== undefined
+      ? proctoring.tab_switch_violations_allowed
+      : 1;
+    const shouldTerminate = proctoring.terminate_on_violation !== false;
 
-    if (strikeCountRef.current === 1) {
+    if (strikeCountRef.current <= allowedViolations) {
       clearTimeout(warningTimeoutRef.current);
       setWarning({
-        message: `${label} This is your first and final warning — doing this again will end your interview immediately.`
+        message: `${label} Warning ${strikeCountRef.current} of ${allowedViolations}. Repeating this violation will end your interview.`
       });
       warningTimeoutRef.current = setTimeout(() => setWarning(null), 6000);
     } else {
       setWarning(null);
-      terminateInterview(`${label} (second violation)`);
+      if (shouldTerminate) {
+        terminateInterview(`${label} (exceeded allowed violations)`);
+      } else {
+        setWarning({
+          message: `${label} Violation recorded.`
+        });
+        warningTimeoutRef.current = setTimeout(() => setWarning(null), 6000);
+      }
     }
-  }, [logFlag, terminateInterview]);
+  }, [interview, logFlag, terminateInterview]);
 
   // ── Identity verification loop (Verifying screen only, before Q1) ────────
   // Captures a reference face descriptor once a single, stable face is seen
@@ -416,6 +436,15 @@ export default function InterviewPortal() {
       if (!videoRef.current || videoRef.current.readyState !== 4) return;
       if (!ACTIVE_STAGES.includes(stageRef.current)) return;
 
+      const proctoring = interview?.proctoring || {};
+      if (proctoring.enabled === false) return;
+      if (proctoring.face_detection === false) return;
+
+      const graceSeconds = proctoring.no_face_grace_seconds !== undefined
+        ? proctoring.no_face_grace_seconds
+        : 10;
+      const requiredConsecutive = Math.max(1, Math.ceil(graceSeconds / 2));
+
       try {
         if (cocoModelRef.current) {
           const objects = await cocoModelRef.current.detect(videoRef.current);
@@ -440,7 +469,7 @@ export default function InterviewPortal() {
         if (detections.length === 0) {
           consecutiveNoFace += 1;
           setFaceStatus("no_face");
-          if (consecutiveNoFace === 3 && lastStatus !== "no_face_flagged") {
+          if (consecutiveNoFace >= requiredConsecutive && lastStatus !== "no_face_flagged") {
             logFlag("no_face");
             lastStatus = "no_face_flagged";
           }
@@ -489,13 +518,15 @@ export default function InterviewPortal() {
   // ── Full-screen exit detection ────────────────────────────────────────────
   useEffect(() => {
     const handleFullscreenChange = () => {
+      const proctoring = interview?.proctoring || {};
+      if (proctoring.enabled === false || proctoring.fullscreen_required === false) return;
       if (!document.fullscreenElement && ACTIVE_STAGES.includes(stageRef.current)) {
         registerStrike("fullscreen_exit");
       }
     };
     document.addEventListener("fullscreenchange", handleFullscreenChange);
     return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
-  }, [registerStrike]);
+  }, [interview, registerStrike]);
 
   // ── Speech synthesis ──────────────────────────────────────────────────────
   const speak = useCallback((text, onEnd) => {
@@ -551,7 +582,12 @@ export default function InterviewPortal() {
     recog.start();
     setStage(STAGE.LISTENING);
 
-    setTimeLeft(120);
+    const questionDuration = interview?.per_question_seconds || (
+      interview?.duration_minutes
+        ? Math.max(30, Math.floor((interview.duration_minutes * 60) / Math.max(1, interview.total || 8)))
+        : 120
+    );
+    setTimeLeft(questionDuration);
     timerRef.current = setInterval(() => {
       setTimeLeft(prev => {
         if (prev <= 1) {

@@ -25,6 +25,9 @@ def create_job():
     jd_text = None
     use_company_weights = True
     scoring_weights = None
+    use_company_interview_settings = True
+    question_count = None
+    difficulty = None
 
     # ── Handle file upload (PDF or Word) ─────────────────────────────────────
     if request.content_type and "multipart/form-data" in request.content_type:
@@ -47,6 +50,16 @@ def create_job():
             except Exception:
                 pass
 
+        if "use_company_interview_settings" in request.form:
+            use_company_interview_settings = request.form.get("use_company_interview_settings", "true").lower() == "true"
+        if "question_count" in request.form:
+            try:
+                question_count = int(request.form.get("question_count"))
+            except Exception:
+                pass
+        if "difficulty" in request.form:
+            difficulty = request.form.get("difficulty", "").strip().lower() or None
+
     # ── Handle raw JSON ───────────────────────────────────────────────────────
     elif request.is_json:
         body    = request.get_json()
@@ -55,6 +68,15 @@ def create_job():
             use_company_weights = bool(body["use_company_weights"])
         if "scoring_weights" in body and isinstance(body["scoring_weights"], dict):
             scoring_weights = body["scoring_weights"]
+        if "use_company_interview_settings" in body:
+            use_company_interview_settings = bool(body["use_company_interview_settings"])
+        if "question_count" in body and body["question_count"] is not None:
+            try:
+                question_count = int(body["question_count"])
+            except Exception:
+                pass
+        if "difficulty" in body and body["difficulty"]:
+            difficulty = str(body["difficulty"]).strip().lower()
 
     if not jd_text:
         return jsonify({"success": False, "error": "Provide jd_text or upload a PDF/Word file"}), 400
@@ -68,15 +90,18 @@ def create_job():
 
     job_doc = {
         **result["data"],
-        "company_id"         : company["company_id"],
-        "company_name"       : company["company_name"],
-        "raw_jd_text"        : jd_text,
-        "status"             : "active",
-        "candidates_count"   : 0,
-        "use_company_weights": use_company_weights,
-        "scoring_weights"    : scoring_weights,
-        "created_at"         : now,
-        "updated_at"         : now
+        "company_id"                    : company["company_id"],
+        "company_name"                  : company["company_name"],
+        "raw_jd_text"                   : jd_text,
+        "status"                        : "active",
+        "candidates_count"              : 0,
+        "use_company_weights"           : use_company_weights,
+        "scoring_weights"               : scoring_weights,
+        "use_company_interview_settings": use_company_interview_settings,
+        "question_count"                : question_count,
+        "difficulty"                    : difficulty,
+        "created_at"                    : now,
+        "updated_at"                    : now
     }
 
     inserted       = jobs_collection.insert_one(job_doc)
@@ -158,6 +183,12 @@ def update_job(job_id):
             update_fields["use_company_weights"] = bool(body["use_company_weights"])
         if "scoring_weights" in body and isinstance(body["scoring_weights"], dict):
             update_fields["scoring_weights"] = body["scoring_weights"]
+        if "use_company_interview_settings" in body:
+            update_fields["use_company_interview_settings"] = bool(body["use_company_interview_settings"])
+        if "question_count" in body:
+            update_fields["question_count"] = int(body["question_count"]) if body["question_count"] is not None else None
+        if "difficulty" in body:
+            update_fields["difficulty"] = str(body["difficulty"]).strip().lower() if body["difficulty"] else None
 
         result = jobs_collection.update_one(
             {"_id": cand_oid, "company_id": company["company_id"]},

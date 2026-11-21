@@ -345,9 +345,20 @@ def create_interview_link(candidate_id):
         token      = secrets.token_urlsafe(32)
         expires_at = datetime.now(timezone.utc) + timedelta(days=3)
 
-        # Build a trimmed 4-question set: intro + top 3 JD-matched (technical) questions
+        # Build interview question set according to settings/job override
+        from utils.settings import get_settings
+        interview_settings = get_settings(company["company_id"]).get("interview", {})
+        if job and job.get("use_company_interview_settings") is False and job.get("question_count"):
+            target_count = int(job.get("question_count"))
+        else:
+            target_count = int(interview_settings.get("question_count", 8))
+
         questions_dict   = candidate.get("interview_questions", {})
-        technical_qs     = questions_dict.get("technical", [])[:3]
+        all_candidate_qs = (
+            questions_dict.get("technical", []) +
+            questions_dict.get("behavioral", []) +
+            questions_dict.get("gap_focused", [])
+        )
 
         intro_question = {
             "id"      : 1,
@@ -355,8 +366,8 @@ def create_interview_link(candidate_id):
         }
 
         final_questions = [intro_question]
-        for i, q in enumerate(technical_qs, start=2):
-            final_questions.append({"id": i, "question": q["question"]})
+        for i, q in enumerate(all_candidate_qs[:max(0, target_count - 1)], start=2):
+            final_questions.append({"id": i, "question": q.get("question", "")})
 
         candidates_collection.update_one(
             {"_id": ObjectId(candidate_id)},
@@ -429,13 +440,34 @@ def get_public_interview(token):
                 questions_dict.get("gap_focused", [])
             )
 
+        # Retrieve safe interview configuration subset for candidate
+        from utils.settings import get_settings
+        company_settings = get_settings(candidate.get("company_id", ""))
+        interview_settings = company_settings.get("interview", {})
+        proctoring = interview_settings.get("proctoring", {})
+
+        safe_proctoring = {
+            "enabled": bool(proctoring.get("enabled", True)),
+            "face_detection": bool(proctoring.get("face_detection", True)),
+            "fullscreen_required": bool(proctoring.get("fullscreen_required", True)),
+            "tab_switch_violations_allowed": int(proctoring.get("tab_switch_violations_allowed", 1)),
+            "no_face_grace_seconds": int(proctoring.get("no_face_grace_seconds", 10)),
+            "terminate_on_violation": bool(proctoring.get("terminate_on_violation", True))
+        }
+
+        duration_minutes = int(interview_settings.get("duration_minutes", 30))
+        per_question_seconds = max(30, int((duration_minutes * 60) / max(1, len(final_questions))))
+
         return jsonify({
-            "success"       : True,
-            "candidate_name": candidate["candidate_name"],
-            "job_title"     : job["job_title"] if job else "",
-            "company_name"  : candidate.get("company_name", "RecruitMate"),
-            "questions"     : final_questions,
-            "total"         : len(final_questions)
+            "success"             : True,
+            "candidate_name"      : candidate["candidate_name"],
+            "job_title"           : job["job_title"] if job else "",
+            "company_name"        : candidate.get("company_name", "RecruitMate"),
+            "questions"           : final_questions,
+            "total"               : len(final_questions),
+            "duration_minutes"    : duration_minutes,
+            "per_question_seconds": per_question_seconds,
+            "proctoring"          : safe_proctoring
         }), 200
 
     except Exception as e:

@@ -198,7 +198,25 @@ def screen_candidate(job_id):
 
     # ── Agent 3: Generate questions ───────────────────────────────────────────
     candidate_data   = {"candidate_name": candidate_name, "candidate_email": candidate_email}
-    questions_result = generate_questions(candidate_data, job, screen_data)
+    interview_settings = hiring_settings.get("interview") if "interview" in hiring_settings else get_settings(company["company_id"]).get("interview", {})
+
+    if job.get("use_company_interview_settings") is False:
+        q_count = job.get("question_count") or interview_settings.get("question_count", 8)
+        diff    = job.get("difficulty") or interview_settings.get("difficulty", "medium")
+    else:
+        q_count = interview_settings.get("question_count", 8)
+        diff    = interview_settings.get("difficulty", "medium")
+
+    q_types = interview_settings.get("question_types", "mixed")
+
+    questions_result = generate_questions(
+        candidate_data=candidate_data,
+        job_data=job,
+        screen_data=screen_data,
+        question_count=q_count,
+        difficulty=diff,
+        question_types=q_types
+    )
     questions        = questions_result.get("data", {}).get("questions", {})
 
     candidate_doc = {
