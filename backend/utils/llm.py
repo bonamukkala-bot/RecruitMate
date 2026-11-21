@@ -149,7 +149,8 @@ def call_llm(
     required_keys: set | list | None = None,
     output_language: str | None = None,
     tone: str | None = None,
-    raise_on_budget_exceeded: bool = True
+    raise_on_budget_exceeded: bool = True,
+    timeout: float | None = None
 ) -> dict:
     """
     Central LLM call dispatcher:
@@ -214,7 +215,7 @@ def call_llm(
         model_name=target_model,
         temperature=temp,
         max_tokens=effective_max_tokens,
-        timeout=45.0
+        timeout=float(timeout) if timeout is not None else 45.0
     )
 
     start_time = time.time()

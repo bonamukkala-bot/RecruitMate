@@ -242,6 +242,7 @@ def process_turn_submission(
     # ── Determine Next Turn ───────────────────────────────────────────────────
     follow_up_mode = interview_settings.get("follow_up_mode", "off")
     max_fu_allowed = int(interview_settings.get("max_follow_ups_per_question", 2))
+    probe_depth = interview_settings.get("probe_depth", "standard")
 
     # Decision #2: For code-type questions, bypass adaptive follow-ups and move directly to next_core
     is_code_question = (
@@ -254,20 +255,94 @@ def process_turn_submission(
     current_type = target_turn.get("type", "core")
 
     advance_to_next_core = False
+    next_turn = None
 
-    if follow_up_mode == "off" or is_code_question:
+    if current_type == "wrap_up":
+        # Wrap up has been answered. The interview is finished.
+        next_turn = None
+    elif follow_up_mode == "off":
         advance_to_next_core = True
+        target_turn["_decider_reason"] = "Follow-up mode off - advancing sequentially"
+    elif is_code_question:
+        advance_to_next_core = True
+        target_turn["_decider_reason"] = "Code question - bypassed adaptive follow-up"
     elif follow_ups_used >= max_fu_allowed:
         advance_to_next_core = True
-    elif current_type == "restate":
-        # Restate can only happen once per question; after candidate answers a restate, advance
-        advance_to_next_core = True
+        target_turn["_decider_reason"] = f"Max follow-ups reached ({follow_ups_used}/{max_fu_allowed})"
     else:
-        # Adaptive mode handles next turn (in Phase B this prepares the turn progression,
-        # and Phase C wires the dynamic LLM evaluation & decision)
-        advance_to_next_core = True
+        # Combined Evaluator + Decider (Phase C)
+        from agents.adaptive_decider import evaluate_and_decide_turn
 
-    next_turn = None
+        has_restated = bool(coverage.get("restated_on_current", False))
+        decider_res = evaluate_and_decide_turn(
+            company_id=candidate.get("company_id"),
+            job_data=job_data or {},
+            current_question=target_turn.get("question", ""),
+            candidate_answer=target_turn.get("answer", ""),
+            current_core_index=current_core_idx,
+            total_core_questions=total_core,
+            follow_ups_used=follow_ups_used,
+            max_follow_ups=max_fu_allowed,
+            has_restated=has_restated,
+            probe_depth=probe_depth,
+            required_topics=req_topics,
+            covered_topics=coverage.get("covered_topics", []),
+            question_type=current_type
+        )
+
+        eval_data = decider_res.get("evaluation", {})
+        dec_data = decider_res.get("decision", {})
+
+        target_turn["_verdict"] = eval_data.get("verdict")
+        target_turn["_score"] = eval_data.get("score")
+        target_turn["_gaps"] = eval_data.get("missing", [])
+        target_turn["_decider_reason"] = dec_data.get("reason", "")
+
+        # Incorporate newly covered topics
+        for cov in eval_data.get("covered", []):
+            if cov and cov not in coverage.get("covered_topics", []):
+                coverage["covered_topics"].append(cov)
+
+        action = dec_data.get("action", "next_core")
+        follow_up_q = dec_data.get("follow_up_question")
+
+        if action in ("probe_deeper", "probe_gap", "easier"):
+            coverage["follow_ups_on_current"] = follow_ups_used + 1
+            next_turn = {
+                "turn_id": f"turn_{len(turns) + 1}",
+                "parent_turn_id": target_turn.get("turn_id"),
+                "core_question_index": current_core_idx,
+                "type": action,
+                "question": follow_up_q,
+                "answer": None,
+                "asked_at": now_utc,
+                "answered_at": None,
+                "_verdict": None,
+                "_score": None,
+                "_gaps": [],
+                "_decider_reason": dec_data.get("reason", "")
+            }
+        elif action == "restate":
+            coverage["follow_ups_on_current"] = follow_ups_used + 1
+            coverage["restated_on_current"] = True
+            next_turn = {
+                "turn_id": f"turn_{len(turns) + 1}",
+                "parent_turn_id": target_turn.get("turn_id"),
+                "core_question_index": current_core_idx,
+                "type": "restate",
+                "question": follow_up_q,
+                "answer": None,
+                "asked_at": now_utc,
+                "answered_at": None,
+                "_verdict": None,
+                "_score": None,
+                "_gaps": [],
+                "_decider_reason": dec_data.get("reason", "")
+            }
+        else:
+            # "next_core" or "wrap_up"
+            advance_to_next_core = True
+
     if advance_to_next_core:
         next_core_idx = current_core_idx + 1
         if next_core_idx < total_core and next_core_idx < len(final_questions):
