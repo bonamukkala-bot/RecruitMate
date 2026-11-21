@@ -224,3 +224,49 @@ def test_api_put_invalid_section(client, auth_headers):
     res = client.put("/api/settings/invalid_section_xyz", json={}, headers=auth_headers)
     assert res.status_code == 400
     assert "Invalid section" in res.get_json()["error"]
+
+def test_settings_routes_allow_production_db_name(client, auth_headers):
+    """
+    Regression test: Calling settings GET, PUT, and reset endpoints with
+    Config.DB_NAME patched to 'recruitmate' must succeed with 200, never 500.
+    The assert_safe_db guard applies to standalone scripts only, not HTTP routes.
+    """
+    test_comp_id = "650000000000000000000001"
+    original_db = Config.DB_NAME
+    try:
+        Config.DB_NAME = "recruitmate"
+
+        # 1. GET /api/settings
+        get_res = client.get("/api/settings", headers=auth_headers)
+        assert get_res.status_code == 200
+        assert get_res.get_json()["success"] is True
+
+        # 2. PUT /api/settings/hiring
+        put_payload = {
+            "thresholds": {
+                "senior": {"advance_score": 75, "l2_score": 75, "hr_score": 55},
+                "mid":    {"advance_score": 70, "l2_score": 70, "hr_score": 50},
+                "junior": {"advance_score": 65, "l2_score": 65, "hr_score": 45}
+            },
+            "scoring_weights": {
+                "skills": 40,
+                "experience": 30,
+                "education": 15,
+                "projects": 15
+            },
+            "approval_mode": {
+                "auto_reject_requires_approval": False
+            }
+        }
+        put_res = client.put("/api/settings/hiring", json=put_payload, headers=auth_headers)
+        assert put_res.status_code == 200
+        assert put_res.get_json()["success"] is True
+
+        # 3. POST /api/settings/hiring/reset
+        reset_res = client.post("/api/settings/hiring/reset", headers=auth_headers)
+        assert reset_res.status_code == 200
+        assert reset_res.get_json()["success"] is True
+
+    finally:
+        Config.DB_NAME = original_db
+        company_settings_collection.delete_many({"company_id": test_comp_id})

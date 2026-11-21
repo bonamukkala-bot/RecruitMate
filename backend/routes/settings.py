@@ -8,8 +8,7 @@ from utils.settings import (
     DEFAULT_SETTINGS,
     VALID_SECTIONS,
     get_settings,
-    validate_section,
-    assert_safe_db
+    validate_section
 )
 
 settings_bp = Blueprint("settings", __name__)
@@ -23,7 +22,6 @@ def get_all_settings():
     Always returns complete structure even if no settings document exists yet.
     """
     try:
-        assert_safe_db()
         company = get_current_company()
         company_id = company.get("company_id")
         if not company_id:
@@ -45,7 +43,6 @@ def update_section(section: str):
     Validates input schema and performs deep validation.
     """
     try:
-        assert_safe_db()
         company = get_current_company()
         company_id = company.get("company_id")
         if not company_id:
@@ -99,7 +96,6 @@ def reset_section(section: str):
     Reset a specific settings section back to its default configuration.
     """
     try:
-        assert_safe_db()
         company = get_current_company()
         company_id = company.get("company_id")
         if not company_id:

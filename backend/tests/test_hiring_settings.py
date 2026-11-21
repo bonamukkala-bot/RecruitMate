@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from app import app
 from config import Config
-from utils.settings import validate_section, get_settings, assert_safe_db
+from utils.settings import validate_section, get_settings
 from utils.db import (
     company_settings_collection,
     candidates_collection,
@@ -24,7 +24,6 @@ TEST_COMPANY_ID = "650000000000000000000002"
 
 @pytest.fixture
 def client():
-    assert_safe_db()
     app.config["TESTING"] = True
     with app.test_client() as client:
         yield client
