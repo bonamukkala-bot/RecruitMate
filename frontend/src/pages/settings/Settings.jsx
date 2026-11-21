@@ -11,6 +11,7 @@ import AISettings from "../../components/settings/AISettings";
 import TeamSettings from "../../components/settings/TeamSettings";
 import CompanySettings from "../../components/settings/CompanySettings";
 import PrivacySettings from "../../components/settings/PrivacySettings";
+import IntegrationsSettings from "../../components/settings/IntegrationsSettings";
 import Input from "../../components/ui/Input";
 import Button from "../../components/ui/Button";
 import LoadingSpinner from "../../components/ui/LoadingSpinner";
@@ -308,8 +309,11 @@ export default function Settings() {
           {/* TAB: Privacy */}
           {activeTab === "privacy" && <PrivacySettings />}
 
+          {/* TAB: Integrations */}
+          {activeTab === "integrations" && <IntegrationsSettings />}
+
           {/* Placeholder for future enabled tabs */}
-          {activeTab !== "security" && activeTab !== "hiring" && activeTab !== "interview" && activeTab !== "email" && activeTab !== "ai" && activeTab !== "team" && activeTab !== "company" && activeTab !== "privacy" && (
+          {activeTab !== "security" && activeTab !== "hiring" && activeTab !== "interview" && activeTab !== "email" && activeTab !== "ai" && activeTab !== "team" && activeTab !== "company" && activeTab !== "privacy" && activeTab !== "integrations" && (
             <SettingsSection
               title={currentTabObj.label}
               description={currentTabObj.description}

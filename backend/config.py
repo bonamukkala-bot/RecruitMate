@@ -50,3 +50,10 @@ class Config:
     BREVO_SENDER_NAME  = os.getenv("BREVO_SENDER_NAME")
     TURNSTILE_SECRET_KEY = os.getenv("TURNSTILE_SECRET_KEY")
     FRONTEND_URL       = os.getenv("FRONTEND_URL") or "http://localhost:3000"
+
+    # Google Calendar & Meet Integration
+    GOOGLE_CALENDAR_ENABLED     = os.getenv("GOOGLE_CALENDAR_ENABLED", "false").lower() in ("true", "1")
+    GOOGLE_CLIENT_ID            = os.getenv("GOOGLE_CLIENT_ID", "")
+    GOOGLE_CLIENT_SECRET        = os.getenv("GOOGLE_CLIENT_SECRET", "")
+    GOOGLE_REDIRECT_URI         = os.getenv("GOOGLE_REDIRECT_URI", "")
+    GOOGLE_TOKEN_ENCRYPTION_KEY = os.getenv("GOOGLE_TOKEN_ENCRYPTION_KEY", "")

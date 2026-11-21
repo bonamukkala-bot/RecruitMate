@@ -172,6 +172,19 @@ def schedule_next_step(
         email_content = res.get("data", {}) if res.get("success") else {"subject": "Application Update", "body": f"Next step: {schedule['next_step']}"}
 
         auto_reject_requires_approval = bool((approval_mode or {}).get("auto_reject_requires_approval", False))
+        
+        # Optional Google Calendar & Meet event creation
+        meet_info = None
+        if schedule["decision"] != "reject" and Config.GOOGLE_CALENDAR_ENABLED:
+            from utils.google_calendar import create_calendar_meet_event
+            meet_info = create_calendar_meet_event(
+                company_id=candidate_data.get("company_id", ""),
+                summary=f"Interview: {candidate_data.get('candidate_name')} - {job_data.get('job_title')}",
+                description=f"Interview scheduled for {schedule['next_step']}.\nCandidate: {candidate_data.get('candidate_name')}",
+                start_time=schedule["scheduled_time"],
+                attendee_email=candidate_data.get("candidate_email")
+            )
+
         res_data = {
             "candidate_name"      : candidate_data.get("candidate_name"),
             "candidate_email"     : candidate_data.get("candidate_email"),
@@ -186,7 +199,9 @@ def schedule_next_step(
             "hiring_recommendation": hiring_recommendation,
             "email_subject"       : email_content.get("subject", ""),
             "email_body"          : email_content.get("body", ""),
-            "notification_email"  : email_content
+            "notification_email"  : email_content,
+            "meet_link"           : meet_info.get("meet_link") if meet_info else None,
+            "calendar_event_id"   : meet_info.get("event_id") if meet_info else None
         }
         if schedule["decision"] == "reject" and auto_reject_requires_approval:
             res_data["status"] = "pending_review"

@@ -31,6 +31,7 @@ from utils.email_renderer import (
     validate_template_variables
 )
 from utils.llm import get_company_monthly_tokens, check_budget_limit
+from utils.slack import mask_slack_url
 
 settings_bp = Blueprint("settings", __name__)
 
@@ -50,6 +51,29 @@ def _check_rate_limit(company_id: str) -> bool:
     _TEST_EMAIL_HISTORY[company_id] = timestamps
     return True
 
+def _sanitize_settings_for_response(settings_dict: dict, section_name: str | None = None) -> dict:
+    if not settings_dict:
+        return settings_dict
+    sanitized = copy.deepcopy(settings_dict)
+
+    def _sanitize_integrations(integ):
+        if not isinstance(integ, dict):
+            return integ
+        raw_slack = integ.get("slack_webhook_url", "")
+        integ["slack_configured"] = bool(raw_slack)
+        masked = mask_slack_url(raw_slack)
+        integ["slack_webhook_url"] = masked
+        integ["slack_webhook_url_masked"] = masked
+        if "google_refresh_token_enc" in integ:
+            del integ["google_refresh_token_enc"]
+        return integ
+
+    if section_name == "integrations":
+        return _sanitize_integrations(sanitized)
+    if "integrations" in sanitized and isinstance(sanitized["integrations"], dict):
+        sanitized["integrations"] = _sanitize_integrations(sanitized["integrations"])
+    return sanitized
+
 # ── GET /api/settings ─────────────────────────────────────────────────────────
 @settings_bp.route("", methods=["GET"])
 @jwt_required
@@ -65,7 +89,7 @@ def get_all_settings():
             return jsonify({"success": False, "error": "Company ID missing from token"}), 400
 
         settings = get_settings(company_id)
-        return jsonify({"success": True, "settings": settings}), 200
+        return jsonify({"success": True, "settings": _sanitize_settings_for_response(settings)}), 200
 
     except Exception as e:
         traceback.print_exc()
@@ -91,7 +115,12 @@ def get_section_settings(section: str):
             }), 400
 
         settings = get_settings(company_id)
-        return jsonify({"success": True, "section": section, "settings": settings.get(section, {})}), 200
+        section_data = settings.get(section, {})
+        return jsonify({
+            "success": True,
+            "section": section,
+            "settings": _sanitize_settings_for_response(section_data, section_name=section)
+        }), 200
 
     except Exception as e:
         traceback.print_exc()
@@ -121,6 +150,13 @@ def update_section(section: str):
         payload = request.get_json(silent=True)
         if payload is None:
             return jsonify({"success": False, "error": "Invalid JSON or missing request body"}), 400
+
+        # Preserve existing secret Slack webhook URL if masked representation was passed back
+        if section == "integrations" and isinstance(payload, dict):
+            incoming_slack = payload.get("slack_webhook_url", "")
+            if incoming_slack and ("..." in incoming_slack or "***" in incoming_slack):
+                existing_settings = get_settings(company_id)
+                payload["slack_webhook_url"] = existing_settings.get("integrations", {}).get("slack_webhook_url", "")
 
         is_valid, validated_or_err = validate_section(section, payload)
         if not is_valid:
@@ -152,7 +188,7 @@ def update_section(section: str):
             "success": True,
             "message": f"{section.capitalize()} settings updated successfully",
             "section": section,
-            "data": validated_or_err
+            "data": _sanitize_settings_for_response(validated_or_err, section_name=section)
         }), 200
 
     except Exception as e:

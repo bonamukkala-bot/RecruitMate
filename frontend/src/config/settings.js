@@ -16,7 +16,8 @@ export const ENABLED_TABS = [
   "ai",
   "team",
   "company",
-  "privacy"
+  "privacy",
+  "integrations"
 ];
 
 export const SETTINGS_TABS = [

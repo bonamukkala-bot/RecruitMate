@@ -9,6 +9,8 @@ from routes.candidates import candidates_bp
 from routes.pipeline   import pipeline_bp
 from routes.settings   import settings_bp
 from routes.privacy    import privacy_bp
+from routes.integrations import integrations_bp
+from routes.v1         import v1_bp
 
 load_dotenv()
 
@@ -34,6 +36,8 @@ def create_app():
     app.register_blueprint(pipeline_bp,   url_prefix="/api/pipeline")
     app.register_blueprint(settings_bp,   url_prefix="/api/settings")
     app.register_blueprint(privacy_bp,    url_prefix="/api/privacy")
+    app.register_blueprint(integrations_bp, url_prefix="/api/integrations")
+    app.register_blueprint(v1_bp,           url_prefix="/api/v1")
     # ── Create DB indexes on startup ─────────────────────────────────────────
     from utils.db import create_indexes
     from config import Config

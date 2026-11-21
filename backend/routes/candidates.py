@@ -6,6 +6,8 @@ from agents.resume_screener import screen_resume
 from agents.question_generator import generate_questions
 from agents.email_sender import send_rejection_email, send_owner_notification
 from agents.candidate_comparator import compare_candidates
+from utils.webhook_dispatcher import dispatch_webhook_event
+from utils.slack import send_slack_notification
 from datetime import datetime, timezone
 from bson import ObjectId
 import os
@@ -168,6 +170,19 @@ def screen_candidate(job_id):
                 "job_title": job.get("job_title", ""),
                 "reason": candidate_doc.get("review_reason", "")
             })
+            send_slack_notification(company["company_id"], "pending_review", {
+                "candidate_name": candidate_name,
+                "job_title": job.get("job_title", "")
+            })
+            dispatch_webhook_event(company["company_id"], "candidate.pending_review", {
+                "event": "candidate.pending_review",
+                "candidate_id": str(inserted.inserted_id),
+                "candidate_name": candidate_name,
+                "candidate_email": candidate_email,
+                "job_id": str(job["_id"]),
+                "job_title": job.get("job_title", ""),
+                "review_reason": candidate_doc.get("review_reason", "")
+            })
             return jsonify({
                 "success"       : True,
                 "message"       : "Candidate requires review before rejection",
@@ -194,6 +209,21 @@ def screen_candidate(job_id):
         send_owner_notification(company["company_id"], "new_candidate", {
             "candidate_name": candidate_name,
             "job_title": job.get("job_title", ""),
+            "match_score": match_score
+        })
+        send_slack_notification(company["company_id"], "new_candidate", {
+            "candidate_name": candidate_name,
+            "job_title": job.get("job_title", ""),
+            "match_score": match_score
+        })
+        dispatch_webhook_event(company["company_id"], "candidate.created", {
+            "event": "candidate.created",
+            "candidate_id": str(inserted.inserted_id),
+            "candidate_name": candidate_name,
+            "candidate_email": candidate_email,
+            "job_id": str(job["_id"]),
+            "job_title": job.get("job_title", ""),
+            "status": status,
             "match_score": match_score
         })
 

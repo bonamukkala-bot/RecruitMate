@@ -32,6 +32,9 @@ company_settings_collection = db["company_settings"]
 audit_logs_collection = db["audit_logs"]
 llm_usage_collection  = db["llm_usage"]
 team_members_collection = db["team_members"]
+api_keys_collection     = db["api_keys"]
+webhooks_collection     = db["webhooks"]
+webhook_logs_collection = db["webhook_deliveries"]
 
 # ── Indexes ───────────────────────────────────────────────────────────────────
 def create_indexes():
@@ -42,6 +45,13 @@ def create_indexes():
         candidates_collection.create_index([("company_id", ASCENDING)])
         candidates_collection.create_index([("job_id", ASCENDING)])
         audit_logs_collection.create_index([("company_id", ASCENDING)])
+        try:
+            api_keys_collection.create_index([("key_hash", ASCENDING)], unique=True)
+            api_keys_collection.create_index([("company_id", ASCENDING)])
+            webhooks_collection.create_index([("company_id", ASCENDING)])
+            webhook_logs_collection.create_index([("company_id", ASCENDING), ("delivered_at", ASCENDING)])
+        except Exception as int_idx_err:
+            print(f"⚠️ [integrations] Index creation warning: {int_idx_err}")
         try:
             llm_usage_collection.create_index([("company_id", ASCENDING), ("ts", ASCENDING)])
             llm_usage_collection.create_index(

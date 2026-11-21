@@ -674,6 +674,27 @@ def submit_public_interview(token):
             {"score": overall_score, "decision": final_status}
         )
 
+        # Dispatch integrations events (Slack & Outgoing Webhooks)
+        comp_id = candidate.get("company_id")
+        if comp_id:
+            from utils.webhook_dispatcher import dispatch_webhook_event
+            from utils.slack import send_slack_notification
+            dispatch_webhook_event(comp_id, "interview.completed", {
+                "event": "interview.completed",
+                "candidate_id": str(candidate["_id"]),
+                "candidate_name": candidate.get("candidate_name", ""),
+                "candidate_email": candidate.get("candidate_email", ""),
+                "job_id": str(candidate.get("job_id", "")),
+                "job_title": (job.get("job_title") or job.get("title", "")) if job else "",
+                "overall_score": overall_score,
+                "status": final_status
+            })
+            send_slack_notification(comp_id, "interview_complete", {
+                "candidate_name": candidate.get("candidate_name", ""),
+                "job_title": (job.get("job_title") or job.get("title", "")) if job else "",
+                "overall_score": overall_score
+            })
+
         # ── If rejected at interview stage, send rejection email ──────────────
         email_sent  = False
         email_error = None

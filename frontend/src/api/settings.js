@@ -16,5 +16,17 @@ export const settingsAPI = {
   getAuditLogs: (page = 1, limit = 50) => api.get(`/settings/team/activity?page=${page}&limit=${limit}`),
   uploadLogo: (formData) => api.post("/settings/company/logo", formData, { headers: { "Content-Type": "multipart/form-data" } }),
   deleteLogo: () => api.delete("/settings/company/logo"),
-  purgeExpired: (execute = false) => api.post("/privacy/purge-expired", { execute })
+  purgeExpired: (execute = false) => api.post("/privacy/purge-expired", { execute }),
+  // Integrations endpoints
+  testSlack: (webhook_url) => api.post("/integrations/slack/test", { webhook_url }),
+  getWebhooks: () => api.get("/integrations/webhooks"),
+  createWebhook: (data) => api.post("/integrations/webhooks", data),
+  deleteWebhook: (id) => api.delete(`/integrations/webhooks/${id}`),
+  testWebhook: (id) => api.post(`/integrations/webhooks/${id}/test`),
+  getWebhookDeliveries: () => api.get("/integrations/webhooks/deliveries"),
+  getApiKeys: () => api.get("/integrations/api-keys"),
+  createApiKey: (data) => api.post("/integrations/api-keys", data),
+  revokeApiKey: (id) => api.delete(`/integrations/api-keys/${id}`),
+  getGoogleStatus: () => api.get("/integrations/google/status"),
+  disconnectGoogle: () => api.post("/integrations/google/disconnect")
 };

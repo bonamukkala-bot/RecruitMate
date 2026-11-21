@@ -445,7 +445,8 @@ def validate_section(section: str, data: dict) -> tuple[bool, str | dict]:
     elif section == "integrations":
         slack_url = merged.get("slack_webhook_url", "").strip()
         if slack_url and not slack_url.startswith("https://hooks.slack.com/"):
-            return False, "slack_webhook_url must start with 'https://hooks.slack.com/' or be empty"
+            if not ("..." in slack_url or "***" in slack_url):
+                return False, "slack_webhook_url must start with 'https://hooks.slack.com/' or be empty"
 
         slack_events = merged.get("slack_events", {})
         if not isinstance(slack_events, dict):
