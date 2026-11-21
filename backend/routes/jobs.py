@@ -226,18 +226,13 @@ def generate_jd():
     if not brief:
         return jsonify({"success": False, "error": "Brief description is required"}), 400
 
-    from langchain_groq import ChatGroq
-    from config import Config
-    import re
+    company = get_current_company()
+    company_id = company.get("company_id") if company else None
 
-    llm = ChatGroq(
-        api_key=Config.GROQ_API_KEY,
-        model_name=Config.GROQ_MODEL,
-        temperature=0.7,
-        max_tokens=2048
-    )
+    try:
+        from utils.llm import call_llm
 
-    prompt = f"""You are an expert HR professional. Generate a complete, professional job description based on this brief:
+        prompt = f"""You are an expert HR professional. Generate a complete, professional job description based on this brief:
 
 BRIEF: {brief}
 
@@ -256,18 +251,26 @@ Write a detailed JD that includes:
 Make it sound like a real company's JD. Professional, engaging, and detailed.
 Return ONLY the job description text, no extra commentary."""
 
-    try:
-        response = llm.invoke([
-            {"role": "system", "content": "You are an expert HR professional who writes compelling job descriptions."},
-            {"role": "user",   "content": prompt}
-        ])
-        jd_content = re.sub(r"<(think|thought)>[\s\S]*?</\1>", "", response.content or "", flags=re.IGNORECASE).strip()
+        res = call_llm(
+            company_id=company_id,
+            agent_name="jd_generator",
+            messages=[
+                {"role": "system", "content": "You are an expert HR professional who writes compelling job descriptions."},
+                {"role": "user",   "content": prompt}
+            ],
+            heavy=False,
+            temperature=0.7,
+            expect_json=False
+        )
+
+        if not res["success"]:
+            return jsonify({"success": False, "error": res.get("error", "Failed to generate job description")}), 500
+
         return jsonify({
             "success": True,
-            "jd_text": jd_content
+            "jd_text": res.get("text", "")
         }), 200
     except Exception as e:
-        print(f"❌ [jobs:generate-jd] Error: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 # ── GET /api/jobs/analytics — Dashboard analytics ─────────────────────────────
 @jobs_bp.route("/analytics", methods=["GET"])

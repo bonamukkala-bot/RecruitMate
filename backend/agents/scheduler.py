@@ -4,20 +4,12 @@ import json
 import re
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
-from langchain_groq import ChatGroq
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import Config
+from utils.llm import call_llm
 
 load_dotenv()
-
-# ── LLM singleton ────────────────────────────────────────────────────────────
-_llm = ChatGroq(
-    api_key=Config.GROQ_API_KEY,
-    model_name=Config.GROQ_MODEL,
-    temperature=0.3,
-    max_tokens=2048
-)
 
 _SYSTEM = "You are an HR scheduling assistant. Return ONLY valid JSON. No markdown, no explanation."
 
@@ -156,20 +148,28 @@ def schedule_next_step(
         schedule = _decide_next_step(overall_score, role_level, hiring_recommendation, thresholds=thresholds)
 
         # Step 2 — Generate notification email via LLM
-        raw = _invoke(_NOTIFY_TEMPLATE.format(
+        prompt_content = _NOTIFY_TEMPLATE.format(
             candidate_name=candidate_data.get("candidate_name", "Candidate"),
             job_title=job_data.get("job_title", ""),
             company_name=company_name,
             next_step=schedule["next_step"],
             scheduled_time=schedule["scheduled_time"],
             decision=schedule["decision"]
-        ))
+        )
 
-        cleaned = _clean(raw)
-        if not cleaned:
-            raise ValueError("Empty response received from LLM.")
+        res = call_llm(
+            company_id=candidate_data.get("company_id"),
+            agent_name="scheduler",
+            messages=[
+                {"role": "system", "content": _SYSTEM},
+                {"role": "user",   "content": prompt_content}
+            ],
+            heavy=False,
+            temperature=0.3,
+            expect_json=True
+        )
 
-        email_content = json.loads(cleaned)
+        email_content = res.get("data", {}) if res.get("success") else {"subject": "Application Update", "body": f"Next step: {schedule['next_step']}"}
 
         auto_reject_requires_approval = bool((approval_mode or {}).get("auto_reject_requires_approval", False))
         res_data = {

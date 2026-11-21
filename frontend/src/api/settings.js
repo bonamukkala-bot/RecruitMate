@@ -5,5 +5,6 @@ export const settingsAPI = {
   updateSection: (section, data) => api.put(`/settings/${section}`, data),
   resetSection: (section) => api.post(`/settings/${section}/reset`),
   previewEmail: (data) => api.post("/settings/email/preview", data),
-  sendTestEmail: (data) => api.post("/settings/email/send-test", data)
+  sendTestEmail: (data) => api.post("/settings/email/send-test", data),
+  getAIUsage: () => api.get("/settings/ai/usage")
 };

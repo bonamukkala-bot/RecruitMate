@@ -3,20 +3,12 @@ import sys
 import json
 import re
 from dotenv import load_dotenv
-from langchain_groq import ChatGroq
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import Config
+from utils.llm import call_llm
 
 load_dotenv()
-
-# ── LLM singleton ────────────────────────────────────────────────────────────
-_llm = ChatGroq(
-    api_key=Config.GROQ_API_KEY,
-    model_name=Config.GROQ_MODEL_HEAVY,
-    temperature=0.1,
-    max_tokens=2048
-)
 
 # ── Prompts ──────────────────────────────────────────────────────────────────
 _SYSTEM = "You are an expert technical recruiter. Return ONLY valid JSON. No markdown, no explanation."
@@ -66,58 +58,46 @@ def _clean(text: str) -> str:
     return cleaned.strip()
 
 # ── Main public function ─────────────────────────────────────────────────────
-def screen_resume(resume_text: str, job_data: dict, scoring_weights: dict = None) -> dict:
+def screen_resume(resume_text: str, job_data: dict, scoring_weights: dict = None, company_id: str = None) -> dict:
     """
     Input  : resume_text (str), job_data (dict from parse_jd),
              optional scoring_weights (dict with skills, experience, education, projects)
     Output : {"success": True,  "data": {...}}
            | {"success": False, "error": "...", "raw_response": "..."}
     """
-    raw = ""
-    try:
-        weights_section = ""
-        if scoring_weights and isinstance(scoring_weights, dict):
-            weights_section = (
-                f"SCORING WEIGHTS TO FACTOR IN:\n"
-                f"- Skills match: {scoring_weights.get('skills', 40)}%\n"
-                f"- Experience match: {scoring_weights.get('experience', 30)}%\n"
-                f"- Education match: {scoring_weights.get('education', 15)}%\n"
-                f"- Projects: {scoring_weights.get('projects', 15)}%\n"
-            )
-
-        resp = _llm.invoke(
-            [
-                {"role": "system", "content": _SYSTEM},
-                {"role": "user",   "content": _TEMPLATE.format(
-                    job_title=job_data.get("job_title", ""),
-                    required_skills=", ".join(job_data.get("required_skills", [])),
-                    experience_required=job_data.get("experience_required", ""),
-                    weights_section=weights_section,
-                    resume_text=resume_text
-                )}
-            ]
+    weights_section = ""
+    if scoring_weights and isinstance(scoring_weights, dict):
+        weights_section = (
+            f"SCORING WEIGHTS TO FACTOR IN:\n"
+            f"- Skills match: {scoring_weights.get('skills', 40)}%\n"
+            f"- Experience match: {scoring_weights.get('experience', 30)}%\n"
+            f"- Education match: {scoring_weights.get('education', 15)}%\n"
+            f"- Projects: {scoring_weights.get('projects', 15)}%\n"
         )
-        raw = resp.content or ""
-        cleaned = _clean(raw)
-        if not cleaned:
-            raise ValueError("Empty response received from LLM.")
 
-        parsed = json.loads(cleaned)
+    res = call_llm(
+        company_id=company_id,
+        agent_name="resume_screener",
+        messages=[
+            {"role": "system", "content": _SYSTEM},
+            {"role": "user",   "content": _TEMPLATE.format(
+                job_title=job_data.get("job_title", ""),
+                required_skills=", ".join(job_data.get("required_skills", [])),
+                experience_required=job_data.get("experience_required", ""),
+                weights_section=weights_section,
+                resume_text=resume_text
+            )}
+        ],
+        heavy=True,
+        temperature=0.1,
+        expect_json=True,
+        required_keys=_REQUIRED
+    )
+    if not res["success"]:
+        return res
 
-        # Validate critical fields
-        missing = _REQUIRED - parsed.keys()
-        if missing:
-            raise ValueError(f"LLM omitted required fields: {missing}")
-
-        # Clamp score to valid range
-        parsed["match_score"] = max(0, min(100, int(parsed["match_score"])))
-
-        return {"success": True, "data": parsed}
-
-    except json.JSONDecodeError as e:
-        print(f"❌ [resume_screener] JSON parse failed: {e}\nRaw output: {raw}")
-        return {"success": False, "error": f"JSON parse failed: {e}", "raw_response": raw}
-    except Exception as e:
-        print(f"❌ [resume_screener] Error: {e}")
-        return {"success": False, "error": str(e), "raw_response": raw}
+    parsed = res["data"]
+    # Clamp score to valid range
+    parsed["match_score"] = max(0, min(100, int(parsed["match_score"])))
+    return {"success": True, "data": parsed}
 

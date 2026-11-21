@@ -3,20 +3,12 @@ import sys
 import json
 import re
 from dotenv import load_dotenv
-from langchain_groq import ChatGroq
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import Config
+from utils.llm import call_llm
 
 load_dotenv()
-
-# ── Singleton ──────────────────────────────────────────────────────────────
-_llm = ChatGroq(
-    api_key=Config.GROQ_API_KEY,
-    model_name=Config.GROQ_MODEL,
-    temperature=0.4,
-    max_tokens=2048
-)
 
 _SYSTEM = "You are a senior technical recruiter comparing shortlisted candidates for a role. Return ONLY valid JSON. No markdown, no explanation."
 
@@ -102,7 +94,7 @@ def _compute_skill_overlap(candidates: list) -> dict:
         "unique": unique
     }
 
-def compare_candidates(candidates: list, job_data: dict) -> dict:
+def compare_candidates(candidates: list, job_data: dict, company_id: str = None) -> dict:
     """
     candidates: list of 2-3 candidate dicts (must include _id, candidate_name,
                 match_score, matched_skills, missing_skills, evaluation, status)
@@ -113,46 +105,37 @@ def compare_candidates(candidates: list, job_data: dict) -> dict:
     if len(candidates) > 3:
         return {"success": False, "error": "A maximum of 3 candidates can be compared at once"}
 
-    raw = ""
-    try:
-        job_skills = ", ".join(job_data.get("required_skills", []) or job_data.get("skills", []) or [])
+    job_skills = ", ".join(job_data.get("required_skills", []) or job_data.get("skills", []) or [])
+    cid = company_id or (candidates[0].get("company_id") if candidates else None)
 
-        resp = _llm.invoke(
-            [
-                {"role": "system", "content": _SYSTEM},
-                {"role": "user",   "content": _TEMPLATE.format(
-                    job_title=job_data.get("job_title", ""),
-                    job_skills=job_skills,
-                    candidates_block=_build_candidates_block(candidates)
-                )}
-            ]
-        )
-        raw = resp.content or ""
-        cleaned = _clean(raw)
-        if not cleaned:
-            raise ValueError("Empty response received from LLM.")
+    res = call_llm(
+        company_id=cid,
+        agent_name="candidate_comparator",
+        messages=[
+            {"role": "system", "content": _SYSTEM},
+            {"role": "user",   "content": _TEMPLATE.format(
+                job_title=job_data.get("job_title", ""),
+                job_skills=job_skills,
+                candidates_block=_build_candidates_block(candidates)
+            )}
+        ],
+        heavy=False,
+        temperature=0.4,
+        expect_json=True,
+        required_keys=_REQUIRED
+    )
+    if not res["success"]:
+        return res
 
-        parsed = json.loads(cleaned)
+    parsed = res["data"]
+    overlap = _compute_skill_overlap(candidates)
 
-        missing = _REQUIRED - parsed.keys()
-        if missing:
-            raise ValueError(f"LLM omitted required fields: {missing}")
-
-        overlap = _compute_skill_overlap(candidates)
-
-        return {
-            "success": True,
-            "data": {
-                "recommended_candidate_id" : parsed["recommended_candidate_id"],
-                "recommendation_reasoning" : parsed["recommendation_reasoning"],
-                "other_candidates"         : parsed["other_candidates"],
-                "skill_overlap"            : overlap
-            }
+    return {
+        "success": True,
+        "data": {
+            "recommended_candidate_id" : parsed["recommended_candidate_id"],
+            "recommendation_reasoning" : parsed["recommendation_reasoning"],
+            "other_candidates"         : parsed["other_candidates"],
+            "skill_overlap"            : overlap
         }
-
-    except json.JSONDecodeError as e:
-        print(f"❌ [candidate_comparator] JSON parse failed: {e}\nRaw output: {raw}")
-        return {"success": False, "error": f"JSON parse failed: {e}", "raw_response": raw}
-    except Exception as e:
-        print(f"❌ [candidate_comparator] Error: {e}")
-        return {"success": False, "error": str(e)}
+    }

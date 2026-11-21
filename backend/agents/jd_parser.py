@@ -3,20 +3,12 @@ import sys
 import json
 import re
 from dotenv import load_dotenv
-from langchain_groq import ChatGroq
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import Config
+from utils.llm import call_llm
 
 load_dotenv()
-
-# ── LLM singleton (loaded once, reused for every call) ──────────────────────
-_llm = ChatGroq(
-    api_key=Config.GROQ_API_KEY,
-    model_name=Config.GROQ_MODEL,
-    temperature=0.1,
-    max_tokens=2048
-)
 
 # ── Exact schema shown inline so the model never guesses the shape ───────────
 _SYSTEM = "You are an expert HR analyst. Return ONLY valid JSON. No markdown, no explanation."
@@ -74,42 +66,27 @@ def _sanitize_location(value) -> str:
     return value.strip()
 
 # ── Main public function ─────────────────────────────────────────────────────
-def parse_jd(jd_text: str) -> dict:
+def parse_jd(jd_text: str, company_id: str = None) -> dict:
     """
     Input  : raw JD string (text / extracted from PDF or Word)
     Output : {"success": True,  "data": {...}}
            | {"success": False, "error": "...", "raw_response": "..."}
     """
-    raw = ""
-    try:
-        # Single LLM call — no chain overhead, minimal latency
-        resp = _llm.invoke(
-            [
-                {"role": "system", "content": _SYSTEM},
-                {"role": "user",   "content": _TEMPLATE.format(jd_text=jd_text)}
-            ]
-        )
-        raw = resp.content or ""
-        cleaned = _clean(raw)
-        if not cleaned:
-            raise ValueError("Empty response received from LLM.")
+    res = call_llm(
+        company_id=company_id,
+        agent_name="jd_parser",
+        messages=[
+            {"role": "system", "content": _SYSTEM},
+            {"role": "user",   "content": _TEMPLATE.format(jd_text=jd_text)}
+        ],
+        heavy=False,
+        temperature=0.1,
+        expect_json=True,
+        required_keys=_REQUIRED
+    )
+    if not res["success"]:
+        return res
 
-        parsed = json.loads(cleaned)
-
-        # Validate critical fields exist
-        missing = _REQUIRED - parsed.keys()
-        if missing:
-            raise ValueError(f"LLM omitted required fields: {missing}")
-
-        # Safety net: never let a bracket/template placeholder reach the DB or UI,
-        # regardless of what the LLM actually returned for location.
-        parsed["location"] = _sanitize_location(parsed.get("location"))
-
-        return {"success": True, "data": parsed}
-
-    except json.JSONDecodeError as e:
-        print(f"❌ [jd_parser] JSON parse failed: {e}\nRaw output: {raw}")
-        return {"success": False, "error": f"JSON parse failed: {e}", "raw_response": raw}
-    except Exception as e:
-        print(f"❌ [jd_parser] Error: {e}")
-        return {"success": False, "error": str(e), "raw_response": raw}
+    parsed = res["data"]
+    parsed["location"] = _sanitize_location(parsed.get("location"))
+    return {"success": True, "data": parsed}

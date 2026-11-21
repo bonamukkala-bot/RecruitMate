@@ -30,6 +30,7 @@ pipeline_collection   = db["pipeline"]
 otp_collection        = db["otps"]
 company_settings_collection = db["company_settings"]
 audit_logs_collection = db["audit_logs"]
+llm_usage_collection  = db["llm_usage"]
 
 # ── Indexes ───────────────────────────────────────────────────────────────────
 def create_indexes():
@@ -40,6 +41,14 @@ def create_indexes():
         candidates_collection.create_index([("company_id", ASCENDING)])
         candidates_collection.create_index([("job_id", ASCENDING)])
         audit_logs_collection.create_index([("company_id", ASCENDING)])
+        try:
+            llm_usage_collection.create_index([("company_id", ASCENDING), ("ts", ASCENDING)])
+            llm_usage_collection.create_index(
+                [("ts", ASCENDING)],
+                expireAfterSeconds=180 * 24 * 3600
+            )
+        except Exception as idx_err:
+            print(f"⚠️ [llm_usage] Index creation warning (non-fatal): {idx_err}")
         otp_collection.create_index(
             [("expires_at", ASCENDING)],
             expireAfterSeconds=0

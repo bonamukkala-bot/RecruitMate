@@ -90,7 +90,8 @@ DEFAULT_SETTINGS = {
         "model_heavy": Config.GROQ_MODEL_HEAVY or "openai/gpt-oss-120b",
         "output_language": "English",    # "English" | "Telugu" | "Hindi"
         "tone": "professional",          # "professional" | "friendly" | "concise"
-        "temperature": 0.3
+        "temperature": 0.3,
+        "monthly_token_budget": 0        # 0 = unlimited, positive int otherwise
     },
     "privacy": {
         "data_retention_days": 0,        # 0 = keep forever, else 30-1095
@@ -282,8 +283,11 @@ def validate_section(section: str, data: dict) -> tuple[bool, str | dict]:
     # 4. AI section validation
     elif section == "ai":
         for str_key in ["model_default", "model_heavy"]:
-            if not isinstance(merged.get(str_key), str) or not merged.get(str_key).strip():
+            model_val = merged.get(str_key)
+            if not isinstance(model_val, str) or not model_val.strip():
                 return False, f"{str_key} must be a non-empty string"
+            if model_val not in Config.GROQ_ALLOWED_MODELS:
+                return False, f"{str_key} '{model_val}' is not in allowed models: {Config.GROQ_ALLOWED_MODELS}"
 
         allowed_lang = ["English", "Telugu", "Hindi"]
         if merged.get("output_language") not in allowed_lang:
@@ -294,8 +298,26 @@ def validate_section(section: str, data: dict) -> tuple[bool, str | dict]:
             return False, f"tone must be one of {allowed_tones}"
 
         temp = merged.get("temperature")
-        if not isinstance(temp, (int, float)) or temp < 0.0 or temp > 1.0:
+        try:
+            if isinstance(temp, bool):
+                return False, "temperature must be a number between 0.0 and 1.0"
+            temp_num = float(temp)
+            if temp_num < 0.0 or temp_num > 1.0:
+                return False, "temperature must be a number between 0.0 and 1.0"
+            merged["temperature"] = temp_num
+        except (ValueError, TypeError):
             return False, "temperature must be a number between 0.0 and 1.0"
+
+        budget = merged.get("monthly_token_budget", 0)
+        try:
+            if isinstance(budget, bool):
+                return False, "monthly_token_budget must be a non-negative integer (0 for unlimited)"
+            budget_int = int(budget)
+            if budget_int < 0:
+                return False, "monthly_token_budget must be a non-negative integer (0 for unlimited)"
+            merged["monthly_token_budget"] = budget_int
+        except (ValueError, TypeError):
+            return False, "monthly_token_budget must be a non-negative integer (0 for unlimited)"
 
     # 5. Privacy section validation
     elif section == "privacy":

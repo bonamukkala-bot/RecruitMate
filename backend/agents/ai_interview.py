@@ -3,20 +3,12 @@ import sys
 import json
 import re
 from dotenv import load_dotenv
-from langchain_groq import ChatGroq
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import Config
+from utils.llm import call_llm
 
 load_dotenv()
-
-# ── LLM singleton ────────────────────────────────────────────────────────────
-_llm = ChatGroq(
-    api_key=Config.GROQ_API_KEY,
-    model_name=Config.GROQ_MODEL,
-    temperature=0.3,
-    max_tokens=2048
-)
 
 _SYSTEM = "You are an AI interviewer conducting a professional job interview. Return ONLY valid JSON. No markdown, no explanation."
 
@@ -95,14 +87,19 @@ def _clean(text: str) -> str:
 
     return cleaned.strip()
 
-def _invoke(content: str) -> str:
-    res = _llm.invoke(
-        [
+def _invoke(content: str, company_id: str = None) -> str:
+    res = call_llm(
+        company_id=company_id,
+        agent_name="ai_interview",
+        messages=[
             {"role": "system", "content": _SYSTEM},
             {"role": "user",   "content": content}
-        ]
+        ],
+        heavy=False,
+        temperature=0.3,
+        expect_json=False
     )
-    return res.content or ""
+    return res.get("raw", "") if res.get("success") else ""
 
 # ── Public functions ─────────────────────────────────────────────────────────
 def start_interview(candidate_data: dict, job_data: dict, company_name: str, questions: dict) -> dict:

@@ -11,6 +11,30 @@ class Config:
     GROQ_API_KEY       = os.getenv("GROQ_API_KEY")
     GROQ_MODEL         = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
     GROQ_MODEL_HEAVY   = os.getenv("GROQ_MODEL_HEAVY", "openai/gpt-oss-120b")
+    DEFAULT_GROQ_MODELS = [
+        "openai/gpt-oss-20b",
+        "openai/gpt-oss-120b",
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant"
+    ]
+    _raw_allowed       = os.getenv("GROQ_ALLOWED_MODELS")
+    if _raw_allowed and _raw_allowed.strip():
+        GROQ_ALLOWED_MODELS = [m.strip() for m in _raw_allowed.split(",") if m.strip()] or list(DEFAULT_GROQ_MODELS)
+    else:
+        GROQ_ALLOWED_MODELS = list(DEFAULT_GROQ_MODELS)
+
+    # Ensure configured models are always in allowed list
+    for _m in [GROQ_MODEL, GROQ_MODEL_HEAVY]:
+        if _m and _m not in GROQ_ALLOWED_MODELS:
+            GROQ_ALLOWED_MODELS.append(_m)
+
+    # Estimated pricing per 1M tokens ($/1M tokens)
+    GROQ_MODEL_PRICING = {
+        "openai/gpt-oss-20b": {"prompt": 0.15, "completion": 0.60},
+        "openai/gpt-oss-120b": {"prompt": 0.60, "completion": 2.40},
+        "llama-3.3-70b-versatile": {"prompt": 0.59, "completion": 0.79},
+        "llama-3.1-8b-instant": {"prompt": 0.05, "completion": 0.08},
+    }
 
     # MongoDB
     MONGO_URI          = os.getenv("MONGO_URI")

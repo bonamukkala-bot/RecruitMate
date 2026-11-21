@@ -3,20 +3,12 @@ import sys
 import json
 import re
 from dotenv import load_dotenv
-from langchain_groq import ChatGroq
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import Config
+from utils.llm import call_llm
 
 load_dotenv()
-
-# ── LLM singleton ────────────────────────────────────────────────────────────
-_llm = ChatGroq(
-    api_key=Config.GROQ_API_KEY,
-    model_name=Config.GROQ_MODEL_HEAVY,
-    temperature=0.2,
-    max_tokens=2048
-)
 
 _SYSTEM = "You are a senior technical interviewer and evaluator. Return ONLY valid JSON. No markdown, no explanation."
 
@@ -150,23 +142,23 @@ def evaluate_answers(
                 code=answers.get("code", "")
             )
 
-        resp = _llm.invoke(
-            [
+        res = call_llm(
+            company_id=candidate_data.get("company_id"),
+            agent_name="answer_evaluator",
+            messages=[
                 {"role": "system", "content": _SYSTEM},
                 {"role": "user",   "content": content}
-            ]
+            ],
+            heavy=True,
+            temperature=0.2,
+            max_tokens=2048,
+            expect_json=True,
+            required_keys=_REQUIRED[answer_type]
         )
-        raw = resp.content or ""
-        cleaned = _clean(raw)
-        if not cleaned:
-            raise ValueError("Empty response received from LLM.")
+        if not res["success"]:
+            return res
 
-        parsed = json.loads(cleaned)
-
-        # Validate required fields
-        missing = _REQUIRED[answer_type] - parsed.keys()
-        if missing:
-            raise ValueError(f"LLM omitted required fields: {missing}")
+        parsed = res["data"]
 
         # Clamp overall score to 0-100
         parsed["overall_score"] = max(0, min(100, int(parsed["overall_score"])))

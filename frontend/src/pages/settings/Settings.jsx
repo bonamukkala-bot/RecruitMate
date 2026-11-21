@@ -7,6 +7,7 @@ import SettingsSection from "../../components/settings/SettingsSection";
 import HiringSettings from "../../components/settings/HiringSettings";
 import InterviewSettings from "../../components/settings/InterviewSettings";
 import EmailSettings from "../../components/settings/EmailSettings";
+import AISettings from "../../components/settings/AISettings";
 import Input from "../../components/ui/Input";
 import Button from "../../components/ui/Button";
 import LoadingSpinner from "../../components/ui/LoadingSpinner";
@@ -292,8 +293,11 @@ export default function Settings() {
           {/* TAB: Email */}
           {activeTab === "email" && <EmailSettings />}
 
+          {/* TAB: AI */}
+          {activeTab === "ai" && <AISettings />}
+
           {/* Placeholder for future enabled tabs */}
-          {activeTab !== "security" && activeTab !== "hiring" && activeTab !== "interview" && activeTab !== "email" && (
+          {activeTab !== "security" && activeTab !== "hiring" && activeTab !== "interview" && activeTab !== "email" && activeTab !== "ai" && (
             <SettingsSection
               title={currentTabObj.label}
               description={currentTabObj.description}

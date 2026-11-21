@@ -3,20 +3,12 @@ import sys
 import json
 import re
 from dotenv import load_dotenv
-from langchain_groq import ChatGroq
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import Config
+from utils.llm import call_llm
 
 load_dotenv()
-
-# ── LLM singleton (higher temperature = creative, varied questions) ──────────
-_llm = ChatGroq(
-    api_key=Config.GROQ_API_KEY,
-    model_name=Config.GROQ_MODEL,
-    temperature=0.7,
-    max_tokens=4096
-)
 
 _SYSTEM = "You are a senior technical interviewer. Return ONLY valid JSON. No markdown, no explanation."
 
@@ -156,39 +148,29 @@ def generate_questions(
             question_types=q_types
         )
 
-        resp = _llm.invoke(
-            [
+        res = call_llm(
+            company_id=candidate_data.get("company_id"),
+            agent_name="question_generator",
+            messages=[
                 {"role": "system", "content": _SYSTEM},
                 {"role": "user",   "content": prompt}
-            ]
+            ],
+            heavy=False,
+            temperature=0.7,
+            max_tokens=4096,
+            expect_json=True,
+            required_keys=_REQUIRED
         )
-        raw = resp.content or ""
-        cleaned = _clean(raw)
-        if not cleaned:
-            return {"success": False, "error": "Empty or truncated response received from LLM.", "raw_response": raw}
+        if not res["success"]:
+            return res
 
-        try:
-            parsed = json.loads(cleaned)
-        except json.JSONDecodeError as json_err:
-            return {
-                "success": False,
-                "error": f"LLM returned truncated or invalid JSON: {json_err}",
-                "raw_response": raw
-            }
-
-        missing = _REQUIRED - parsed.keys()
-        if missing:
-            return {
-                "success": False,
-                "error": f"LLM response omitted required fields: {missing}",
-                "raw_response": raw
-            }
+        parsed = res["data"]
 
         if not isinstance(parsed.get("questions"), dict):
             return {
                 "success": False,
                 "error": "LLM response questions field must be a dictionary of categories",
-                "raw_response": raw
+                "raw_response": res.get("raw", "")
             }
 
         # Normalize categories to ensure all exist
@@ -202,7 +184,7 @@ def generate_questions(
             return {
                 "success": False,
                 "error": "LLM did not generate any interview questions",
-                "raw_response": raw
+                "raw_response": res.get("raw", "")
             }
 
         parsed["total"] = total

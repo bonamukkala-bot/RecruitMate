@@ -3,11 +3,11 @@ import time
 import traceback
 import sib_api_v3_sdk
 from sib_api_v3_sdk.rest import ApiException
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from flask import Blueprint, request, jsonify
 from config import Config
 from utils.auth_helper import jwt_required, get_current_company
-from utils.db import company_settings_collection
+from utils.db import company_settings_collection, llm_usage_collection
 from utils.settings import (
     DEFAULT_SETTINGS,
     VALID_SECTIONS,
@@ -19,6 +19,7 @@ from utils.email_renderer import (
     build_email_html,
     validate_template_variables
 )
+from utils.llm import get_company_monthly_tokens, check_budget_limit
 
 settings_bp = Blueprint("settings", __name__)
 
@@ -69,9 +70,9 @@ def update_section(section: str):
     """
     try:
         company = get_current_company()
+        if not company or not company.get("company_id"):
+            return jsonify({"success": False, "error": "Company authorization missing or expired"}), 401
         company_id = company.get("company_id")
-        if not company_id:
-            return jsonify({"success": False, "error": "Company ID missing from token"}), 400
 
         if section not in VALID_SECTIONS:
             return jsonify({
@@ -85,7 +86,7 @@ def update_section(section: str):
 
         is_valid, validated_or_err = validate_section(section, payload)
         if not is_valid:
-            return jsonify({"success": False, "error": validated_or_err}), 400
+            return jsonify({"success": False, "error": str(validated_or_err)}), 400
 
         now_utc = datetime.now(timezone.utc)
         updater_email = company.get("email", "unknown")
@@ -397,3 +398,194 @@ def send_test_email():
     except Exception as e:
         traceback.print_exc()
         return jsonify({"success": False, "error": f"Failed to send test email: {str(e)}"}), 500
+
+# ── GET /api/settings/ai/usage ────────────────────────────────────────────────
+@settings_bp.route("/ai/usage", methods=["GET"])
+@jwt_required
+def get_ai_usage():
+    """
+    Fetches aggregated AI token usage metrics, budget status, agent/model breakdown,
+    and daily timeseries for the authenticated company.
+    Returns empty totals (zeros, empty lists) when llm_usage has no data or does not exist yet.
+    """
+    empty_totals = {
+        "total_calls": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost": 0.0,
+        "avg_latency_ms": 0,
+        "failed_calls": 0,
+        "failure_rate": 0.0
+    }
+
+    try:
+        company = get_current_company()
+        if not company or not company.get("company_id"):
+            return jsonify({"success": False, "error": "Company authorization missing or expired"}), 401
+
+        company_id = str(company.get("company_id"))
+        settings = get_settings(company_id)
+        ai_settings = settings.get("ai", {}) if isinstance(settings, dict) else {}
+        budget = int(ai_settings.get("monthly_token_budget", 0) or 0)
+
+        # Budget check
+        used_month = 0
+        budget_status = "normal"
+        try:
+            used_month = get_company_monthly_tokens(company_id)
+            _, _, budget_status = check_budget_limit(company_id, budget)
+        except Exception as b_err:
+            print(f"⚠️ [get_ai_usage] budget check non-fatal error: {b_err}")
+
+        budget_pct = round((used_month / budget) * 100.0, 1) if budget > 0 else 0.0
+
+        now = datetime.now(timezone.utc)
+        since_7d = now - timedelta(days=7)
+        since_30d = now - timedelta(days=30)
+
+        def _get_totals(since_date):
+            try:
+                pipeline = [
+                    {"$match": {"company_id": company_id, "ts": {"$gte": since_date}}},
+                    {"$group": {
+                        "_id": None,
+                        "total_calls": {"$sum": 1},
+                        "prompt_tokens": {"$sum": "$prompt_tokens"},
+                        "completion_tokens": {"$sum": "$completion_tokens"},
+                        "total_tokens": {"$sum": "$total_tokens"},
+                        "estimated_cost": {"$sum": "$estimated_cost"},
+                        "avg_latency": {"$avg": "$latency_ms"},
+                        "failed_calls": {
+                            "$sum": {"$cond": [{"$eq": ["$success", False]}, 1, 0]}
+                        }
+                    }}
+                ]
+                res = list(llm_usage_collection.aggregate(pipeline))
+                if not res:
+                    return dict(empty_totals)
+                row = res[0]
+                total_calls = row.get("total_calls") or 0
+                failed = row.get("failed_calls") or 0
+                return {
+                    "total_calls": total_calls,
+                    "prompt_tokens": row.get("prompt_tokens") or 0,
+                    "completion_tokens": row.get("completion_tokens") or 0,
+                    "total_tokens": row.get("total_tokens") or 0,
+                    "estimated_cost": round(float(row.get("estimated_cost") or 0.0), 4),
+                    "avg_latency_ms": round(float(row.get("avg_latency") or 0.0), 1),
+                    "failed_calls": failed,
+                    "failure_rate": round((failed / total_calls) * 100.0, 1) if total_calls > 0 else 0.0
+                }
+            except Exception as e:
+                print(f"⚠️ [_get_totals] aggregation fallback: {e}")
+                return dict(empty_totals)
+
+        totals_7d = _get_totals(since_7d)
+        totals_30d = _get_totals(since_30d)
+
+        # By Agent breakdown (last 30 days)
+        by_agent = []
+        try:
+            agent_pipeline = [
+                {"$match": {"company_id": company_id, "ts": {"$gte": since_30d}}},
+                {"$group": {
+                    "_id": "$agent",
+                    "calls": {"$sum": 1},
+                    "total_tokens": {"$sum": "$total_tokens"},
+                    "estimated_cost": {"$sum": "$estimated_cost"},
+                    "avg_latency": {"$avg": "$latency_ms"},
+                    "failed": {"$sum": {"$cond": [{"$eq": ["$success", False]}, 1, 0]}}
+                }},
+                {"$sort": {"total_tokens": -1}}
+            ]
+            for r in llm_usage_collection.aggregate(agent_pipeline):
+                by_agent.append({
+                    "agent": r.get("_id") or "unknown",
+                    "calls": r.get("calls") or 0,
+                    "total_tokens": r.get("total_tokens") or 0,
+                    "estimated_cost": round(float(r.get("estimated_cost") or 0.0), 4),
+                    "avg_latency_ms": round(float(r.get("avg_latency") or 0.0), 1),
+                    "failed": r.get("failed") or 0
+                })
+        except Exception as e:
+            print(f"⚠️ [by_agent] aggregation fallback: {e}")
+
+        # By Model breakdown (last 30 days)
+        by_model = []
+        try:
+            model_pipeline = [
+                {"$match": {"company_id": company_id, "ts": {"$gte": since_30d}}},
+                {"$group": {
+                    "_id": "$model",
+                    "calls": {"$sum": 1},
+                    "total_tokens": {"$sum": "$total_tokens"},
+                    "estimated_cost": {"$sum": "$estimated_cost"},
+                    "avg_latency": {"$avg": "$latency_ms"}
+                }},
+                {"$sort": {"total_tokens": -1}}
+            ]
+            for r in llm_usage_collection.aggregate(model_pipeline):
+                by_model.append({
+                    "model": r.get("_id") or "unknown",
+                    "calls": r.get("calls") or 0,
+                    "total_tokens": r.get("total_tokens") or 0,
+                    "estimated_cost": round(float(r.get("estimated_cost") or 0.0), 4),
+                    "avg_latency_ms": round(float(r.get("avg_latency") or 0.0), 1)
+                })
+        except Exception as e:
+            print(f"⚠️ [by_model] aggregation fallback: {e}")
+
+        # Daily timeseries (last 14 days)
+        raw_daily = {}
+        try:
+            daily_pipeline = [
+                {"$match": {"company_id": company_id, "ts": {"$gte": now - timedelta(days=14)}}},
+                {"$group": {
+                    "_id": {
+                        "$dateToString": {"format": "%Y-%m-%d", "date": "$ts"}
+                    },
+                    "tokens": {"$sum": "$total_tokens"},
+                    "prompt_tokens": {"$sum": "$prompt_tokens"},
+                    "completion_tokens": {"$sum": "$completion_tokens"},
+                    "cost": {"$sum": "$estimated_cost"},
+                    "calls": {"$sum": 1}
+                }},
+                {"$sort": {"_id": 1}}
+            ]
+            raw_daily = {r["_id"]: r for r in llm_usage_collection.aggregate(daily_pipeline) if r.get("_id")}
+        except Exception as e:
+            print(f"⚠️ [daily_timeseries] aggregation fallback: {e}")
+
+        daily_timeseries = []
+        for i in range(13, -1, -1):
+            day_str = (now - timedelta(days=i)).strftime("%Y-%m-%d")
+            entry = raw_daily.get(day_str, {})
+            daily_timeseries.append({
+                "date": day_str,
+                "tokens": entry.get("tokens") or 0,
+                "prompt_tokens": entry.get("prompt_tokens") or 0,
+                "completion_tokens": entry.get("completion_tokens") or 0,
+                "cost": round(float(entry.get("cost") or 0.0), 4),
+                "calls": entry.get("calls") or 0
+            })
+
+        return jsonify({
+            "success": True,
+            "budget": {
+                "monthly_limit": budget,
+                "used_tokens": used_month,
+                "percentage": budget_pct,
+                "status": budget_status
+            },
+            "totals_7d": totals_7d,
+            "totals_30d": totals_30d,
+            "by_agent": by_agent,
+            "by_model": by_model,
+            "daily_timeseries": daily_timeseries,
+            "allowed_models": Config.GROQ_ALLOWED_MODELS
+        }), 200
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": f"Failed to fetch AI usage: {str(e)}"}), 500

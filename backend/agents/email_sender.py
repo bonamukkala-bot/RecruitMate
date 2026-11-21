@@ -7,23 +7,15 @@ from bson import ObjectId
 import sib_api_v3_sdk
 from sib_api_v3_sdk.rest import ApiException
 from dotenv import load_dotenv
-from langchain_groq import ChatGroq
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import Config
 from utils.settings import get_settings
 from utils.email_renderer import render_template, build_email_html
 from utils.db import companies_collection
+from utils.llm import call_llm
 
 load_dotenv()
-
-# ── Singletons ───────────────────────────────────────────────────────────────
-_llm = ChatGroq(
-    api_key=Config.GROQ_API_KEY,
-    model_name=Config.GROQ_MODEL,
-    temperature=0.7,
-    max_tokens=2048
-)
 
 # ── Brevo client setup ────────────────────────────────────────────────────────
 _brevo_config = sib_api_v3_sdk.Configuration()
@@ -209,36 +201,26 @@ def _build_rejection_html(parts: dict, company_name: str) -> str:
 
 # ── Step 1: Generate shortlist email content via LLM ──────────────────────────
 def generate_email_content(candidate_data: dict, job_data: dict, screen_data: dict, company_name: str) -> dict:
-    raw = ""
-    try:
-        raw = _llm.invoke(
-            [
-                {"role": "system", "content": _SYSTEM},
-                {"role": "user",   "content": _TEMPLATE.format(
-                    candidate_name=candidate_data.get("candidate_name", "Candidate"),
-                    candidate_email=candidate_data.get("candidate_email", ""),
-                    job_title=job_data.get("job_title", ""),
-                    company_name=company_name,
-                    match_score=screen_data.get("match_score", 0),
-                    matched_skills=", ".join(screen_data.get("matched_skills", []))
-                )}
-            ]
-        ).content
-
-        parsed = json.loads(_clean(raw))
-
-        missing = _REQUIRED - parsed.keys()
-        if missing:
-            raise ValueError(f"LLM omitted required fields: {missing}")
-
-        return {"success": True, "data": parsed}
-
-    except json.JSONDecodeError as e:
-        print(f"❌ [email_sender] JSON parse failed: {e}\nRaw output: {raw}")
-        return {"success": False, "error": f"JSON parse failed: {e}", "raw_response": raw}
-    except Exception as e:
-        print(f"❌ [email_sender] Error: {e}")
-        return {"success": False, "error": str(e)}
+    company_id = candidate_data.get("company_id")
+    return call_llm(
+        company_id=company_id,
+        agent_name="email_sender",
+        messages=[
+            {"role": "system", "content": _SYSTEM},
+            {"role": "user",   "content": _TEMPLATE.format(
+                candidate_name=candidate_data.get("candidate_name", "Candidate"),
+                candidate_email=candidate_data.get("candidate_email", ""),
+                job_title=job_data.get("job_title", ""),
+                company_name=company_name,
+                match_score=screen_data.get("match_score", 0),
+                matched_skills=", ".join(screen_data.get("matched_skills", []))
+            )}
+        ],
+        heavy=False,
+        temperature=0.7,
+        expect_json=True,
+        required_keys=_REQUIRED
+    )
 
 # ── Step 2: Send shortlist email via Brevo ────────────────────────────────────
 def send_email(candidate_data: dict, job_data: dict, screen_data: dict, company_name: str, from_email: str) -> dict:
@@ -288,34 +270,24 @@ def send_email(candidate_data: dict, job_data: dict, screen_data: dict, company_
 
 # ── Step 3: Generate interview invitation content via LLM ────────────────────
 def generate_interview_email_content(candidate_data: dict, job_data: dict, company_name: str, matched_skills: list) -> dict:
-    raw = ""
-    try:
-        raw = _llm.invoke(
-            [
-                {"role": "system", "content": _INTERVIEW_SYSTEM},
-                {"role": "user",   "content": _INTERVIEW_TEMPLATE.format(
-                    candidate_name=candidate_data.get("candidate_name", "Candidate"),
-                    job_title=job_data.get("job_title", "") if job_data else "",
-                    company_name=company_name,
-                    matched_skills=", ".join(matched_skills or [])
-                )}
-            ]
-        ).content
-
-        parsed = json.loads(_clean(raw))
-
-        missing = _INTERVIEW_REQUIRED - parsed.keys()
-        if missing:
-            raise ValueError(f"LLM omitted required fields: {missing}")
-
-        return {"success": True, "data": parsed}
-
-    except json.JSONDecodeError as e:
-        print(f"❌ [email_sender] JSON parse failed: {e}\nRaw output: {raw}")
-        return {"success": False, "error": f"JSON parse failed: {e}", "raw_response": raw}
-    except Exception as e:
-        print(f"❌ [email_sender] Error: {e}")
-        return {"success": False, "error": str(e)}
+    company_id = candidate_data.get("company_id")
+    return call_llm(
+        company_id=company_id,
+        agent_name="email_sender",
+        messages=[
+            {"role": "system", "content": _INTERVIEW_SYSTEM},
+            {"role": "user",   "content": _INTERVIEW_TEMPLATE.format(
+                candidate_name=candidate_data.get("candidate_name", "Candidate"),
+                job_title=job_data.get("job_title", "") if job_data else "",
+                company_name=company_name,
+                matched_skills=", ".join(matched_skills or [])
+            )}
+        ],
+        heavy=False,
+        temperature=0.7,
+        expect_json=True,
+        required_keys=_INTERVIEW_REQUIRED
+    )
 
 # ── Step 4: Send interview invitation email via Brevo ─────────────────────────
 def send_interview_link_email(candidate_data: dict, job_data: dict, company_name: str, interview_url: str, from_email: str, matched_skills: list = None) -> dict:
@@ -422,36 +394,26 @@ _OFFLINE_REQUIRED = {"subject", "greeting", "body", "sign_off"}
 
 # ── Step 5: Generate offline interview email content via LLM ─────────────────
 def generate_offline_email_content(candidate_data: dict, job_data: dict, company_name: str, interview_date: str, interview_time: str, location: str) -> dict:
-    raw = ""
-    try:
-        raw = _llm.invoke(
-            [
-                {"role": "system", "content": _OFFLINE_SYSTEM},
-                {"role": "user",   "content": _OFFLINE_TEMPLATE.format(
-                    candidate_name=candidate_data.get("candidate_name", "Candidate"),
-                    job_title=job_data.get("job_title", "") if job_data else "",
-                    company_name=company_name,
-                    interview_date=interview_date,
-                    interview_time=interview_time,
-                    location=location
-                )}
-            ]
-        ).content
-
-        parsed = json.loads(_clean(raw))
-
-        missing = _OFFLINE_REQUIRED - parsed.keys()
-        if missing:
-            raise ValueError(f"LLM omitted required fields: {missing}")
-
-        return {"success": True, "data": parsed}
-
-    except json.JSONDecodeError as e:
-        print(f"❌ [email_sender] JSON parse failed: {e}\nRaw output: {raw}")
-        return {"success": False, "error": f"JSON parse failed: {e}", "raw_response": raw}
-    except Exception as e:
-        print(f"❌ [email_sender] Error: {e}")
-        return {"success": False, "error": str(e)}
+    company_id = candidate_data.get("company_id")
+    return call_llm(
+        company_id=company_id,
+        agent_name="email_sender",
+        messages=[
+            {"role": "system", "content": _OFFLINE_SYSTEM},
+            {"role": "user",   "content": _OFFLINE_TEMPLATE.format(
+                candidate_name=candidate_data.get("candidate_name", "Candidate"),
+                job_title=job_data.get("job_title", "") if job_data else "",
+                company_name=company_name,
+                interview_date=interview_date,
+                interview_time=interview_time,
+                location=location
+            )}
+        ],
+        heavy=False,
+        temperature=0.7,
+        expect_json=True,
+        required_keys=_OFFLINE_REQUIRED
+    )
 
 # ── Step 6: Send offline interview confirmation email via Brevo ──────────────
 def send_shortlist_offline_email(candidate_data: dict, job_data: dict, company_name: str, interview_date: str, interview_time: str, location: str, from_email: str) -> dict:
@@ -522,34 +484,24 @@ def send_shortlist_offline_email(candidate_data: dict, job_data: dict, company_n
 
 # ── Step 7: Generate rejection email content via LLM ──────────────────────────
 def generate_rejection_email_content(candidate_data: dict, job_data: dict, company_name: str, stage: str) -> dict:
-    raw = ""
-    try:
-        raw = _llm.invoke(
-            [
-                {"role": "system", "content": _REJECTION_SYSTEM},
-                {"role": "user",   "content": _REJECTION_TEMPLATE.format(
-                    candidate_name=candidate_data.get("candidate_name", "Candidate"),
-                    job_title=job_data.get("job_title", "") if job_data else "",
-                    company_name=company_name,
-                    stage=stage
-                )}
-            ]
-        ).content
-
-        parsed = json.loads(_clean(raw))
-
-        missing = _REJECTION_REQUIRED - parsed.keys()
-        if missing:
-            raise ValueError(f"LLM omitted required fields: {missing}")
-
-        return {"success": True, "data": parsed}
-
-    except json.JSONDecodeError as e:
-        print(f"❌ [email_sender] JSON parse failed: {e}\nRaw output: {raw}")
-        return {"success": False, "error": f"JSON parse failed: {e}", "raw_response": raw}
-    except Exception as e:
-        print(f"❌ [email_sender] Error: {e}")
-        return {"success": False, "error": str(e)}
+    company_id = candidate_data.get("company_id")
+    return call_llm(
+        company_id=company_id,
+        agent_name="email_sender",
+        messages=[
+            {"role": "system", "content": _REJECTION_SYSTEM},
+            {"role": "user",   "content": _REJECTION_TEMPLATE.format(
+                candidate_name=candidate_data.get("candidate_name", "Candidate"),
+                job_title=job_data.get("job_title", "") if job_data else "",
+                company_name=company_name,
+                stage=stage
+            )}
+        ],
+        heavy=False,
+        temperature=0.7,
+        expect_json=True,
+        required_keys=_REJECTION_REQUIRED
+    )
 
 # ── Step 8: Send rejection email via Brevo ─────────────────────────────────────
 def send_rejection_email(candidate_data: dict, job_data: dict, company_name: str, from_email: str, stage: str = "resume screening") -> dict:
