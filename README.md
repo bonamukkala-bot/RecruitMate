@@ -1,8 +1,6 @@
-
-
 # RecruitMate AI
 
-> A multi-tenant recruitment platform that screens resumes, generates personalized interview questions, runs voice interviews through an AI interviewer, and auto-decides shortlist/reject outcomes — coordinated by seven purpose-built Groq-backed agents.
+> A multi-tenant recruitment platform that screens resumes, generates personalized interview questions, runs proctored AI interviews with adaptive follow-up questions, and recommends shortlist/reject outcomes. It is configurable per company through a full Settings system and powered by Groq-backed agents.
 
 **Live App:** https://recruit-mate-chi.vercel.app
 **Backend Health:** https://recruitmate-backend-zkru.onrender.com/api/health
@@ -15,39 +13,84 @@
 | | |
 |---|---|
 | **Status** | Live, single-maintainer, actively developed |
-| **Category** | Full-stack SaaS — AI-assisted recruitment |
-| **Backend** | Python 3.11 · Flask · MongoDB Atlas |
-| **Frontend** | React (CRA) · Tailwind CSS |
-| **AI** | Groq `llama-3.3-70b-versatile` via LangChain |
-| **Deployment** | Render (API) · Vercel (SPA) |
-| **License** | Not yet declared — see License section |
+| **Category** | Full-stack SaaS: AI-assisted recruitment |
+| **Backend** | Python 3.11, Flask, MongoDB Atlas |
+| **Frontend** | React (CRA), Tailwind CSS |
+| **AI** | Groq (`openai/gpt-oss-20b` default, `openai/gpt-oss-120b` heavy) via a central LLM helper |
+| **Deployment** | Render (API), Vercel (SPA) |
+| **Tests** | pytest suite (backend) |
 
 ---
 
 ## The problem
 
-Screening resumes, writing role-specific interview questions, running first-round interviews, scoring answers consistently, and notifying every candidate at every stage is repetitive and time-consuming when done manually for more than a handful of applicants per role, and inconsistent scoring across reviewers makes early-stage decisions hard to defend later.
+Screening resumes, writing role-specific interview questions, running first-round interviews, scoring answers consistently, and notifying candidates at every stage is slow and inconsistent when done manually. Hiring rules also differ between companies, so a hardcoded pipeline does not fit everyone.
 
 ## The approach
 
-RecruitMate AI turns each step of early-stage hiring into a discrete, auditable agent call: parse the JD → score the resume against it → generate questions tailored to that candidate's matched/missing skills → run the interview → score the answers → decide the next step → notify the candidate. Every agent call is logged to a `pipeline` collection per candidate, so a decision can be traced back to the exact model output that produced it.
+Each step of early-stage hiring is a discrete, auditable agent call: parse the JD, score the resume, generate tailored questions, run the interview (fixed or adaptive), evaluate the answers, recommend the next step, and notify the candidate. Every agent call is logged per candidate. Companies tune the behavior of the whole pipeline from a **Settings** area instead of changing code.
 
 ---
 
 ## Key features
 
-- **AI JD generation** — a one-line role description is expanded into a structured job posting (title, required skills, experience, responsibilities, qualifications, type, location).
-- **Resume screening with auto-reject** — resumes (typed or uploaded as PDF/DOCX) are scored 0–100 against the parsed JD; candidates below the configured threshold receive an automatic rejection email with no human step in between.
-- **Per-candidate question generation** — questions are generated from that specific candidate's matched and missing skills, not a static question bank.
-- **Token-secured voice interview portal** — candidates get a unique link (no account, no login) that drives a voice-based interview; the token itself is the access control.
-- **Adaptive interview loop** — in adaptive mode, dynamically evaluates candidate responses after each turn and decides whether to probe deeper, probe knowledge gaps, ask an easier related question, restate, or advance to the next core topic; enforces topic coverage and time constraints while normalizing scores fairly across core questions.
-- **Automated answer evaluation and decisioning** — each answer is scored, an overall score is computed, and the candidate is auto-shortlisted or auto-rejected against a threshold.
-- **Role-aware scheduling** — next-step decisions (next round, HR call, reject) vary by threshold per seniority level (senior / mid / junior), not a single global cutoff.
-- **AI candidate comparison** — given 2–3 shortlisted candidates for the same job, the model picks one and justifies it against actual matched/missing skills and scores rather than generic praise.
-- **Kanban pipeline** — Screened → Shortlisted → Invited → Hired / Rejected.
-- **Analytics + interview heatmap** — hiring funnel, score distributions, skills in demand, and a per-question breakdown of where candidates score weakest across interviews.
-- **Bot-gated registration** — Cloudflare Turnstile is verified server-side before any account is created.
-- **Opt-in TOTP two-factor authentication** — recruiters can enable app-based (Google Authenticator/Authy-style) 2FA from Settings; once enabled, login requires a time-based code in addition to the password, and disabling it requires re-entering the current password.
+### Hiring pipeline
+- **AI JD generation:** a one-line role description becomes a structured job posting.
+- **Resume screening:** resumes (typed, PDF or DOCX) are scored 0-100 against the JD using company-configurable scoring weights.
+- **Per-candidate question generation:** questions come from the candidate's matched and missing skills, with configurable count, difficulty and type.
+- **Token-secured interview portal:** candidates use a unique link with no account. Interviews are proctored (face detection, full-screen and tab-switch rules) with configurable strictness and a consent step.
+- **Adaptive follow-up interviews:** after each answer the agent evaluates it and decides to probe deeper, probe a gap, ask an easier related question, restate once, or move to the next core question. Core questions stay identical for every candidate.
+- **Answer evaluation and recommendation:** a final evaluation over the full transcript produces scores and a hiring recommendation.
+- **Role-aware scheduling:** next-step recommendations use configurable thresholds per seniority level (senior, mid, junior).
+- **Human approval mode:** optionally, reject decisions go to a "Needs Review" queue instead of rejecting automatically.
+- **AI candidate comparison**, **Kanban pipeline**, **analytics and interview heatmap**.
+
+### Account security
+- Bot-gated registration (Cloudflare Turnstile, verified server-side).
+- Email OTP verification with resend, and opt-in TOTP two-factor authentication.
+
+---
+
+## Settings system
+
+Open **Settings** to configure the platform per company. Every setting has defaults that reproduce the original behavior, so a company with no saved settings works exactly as before. Saving validates input server-side, and each section has a Reset to Defaults action.
+
+| Tab | What you can configure |
+|---|---|
+| **Security** | Two-factor authentication (TOTP). |
+| **Hiring Rules** | Score thresholds per role level (L2 and HR rounds), resume scoring weights (skills, experience, education, projects; must total 100), per-job weight override, and "reject requires human approval" mode with a Needs Review queue. |
+| **Interview** | Duration, question count, difficulty (easy, medium, hard, adaptive), question types, proctoring rules (face detection, full-screen, tab-switch violations allowed, no-face grace period, terminate on violation), and follow-up mode (off or adaptive), max follow-ups per question and probe depth. |
+| **Email** | Sender name, reply-to, editable templates (interview invite, shortlist, rejection, OTP footer) with whitelisted variables, live preview, test email, and notification preferences. |
+| **AI** | Default and heavy model from an allow-list, candidate-facing language, tone, temperature, monthly token budget, and a usage dashboard (calls, tokens, estimated cost, latency, failure rate). |
+| **Team & Roles** | Invite members by email, roles, enable/disable, resend invite, remove, and an activity (audit) log. |
+| **Company** | Display name, website, logo (PNG/JPG, validated by content, max 1 MB), brand color, support email. Shown on the interview page and in emails. |
+| **Privacy** | Data retention period, editable consent text with a required checkbox, proctoring event recording, candidate data export, and hard delete. |
+| **Integrations** | Slack notifications, signed outgoing webhooks, API keys with scopes for the public v1 API, and optional Google Calendar/Meet. |
+
+### Roles
+
+| Capability | Owner | Admin | Recruiter | Viewer |
+|---|:-:|:-:|:-:|:-:|
+| View jobs, candidates, transcripts | Yes | Yes | Yes | Yes |
+| Create/edit jobs, change candidate status, schedule | Yes | Yes | Yes | No |
+| Change settings, manage team and integrations | Yes | Yes | No | No |
+| Export candidate data | Yes | Yes | No | No |
+| Delete candidate data, run retention purge | Yes | Yes (delete only) | No | No |
+
+The backend enforces permissions on every protected endpoint. The frontend only hides or disables controls. The owner cannot be removed or demoted, and older tokens without a role are treated as owner.
+
+---
+
+## Adaptive follow-up interview
+
+Enable it in **Settings > Interview > Follow-up mode**. With follow-up mode **off** (the default), the interview behaves exactly as the original fixed-question flow.
+
+1. The server serves one turn at a time and enforces all limits: total questions, overall duration, max follow-ups per question, and one restate per question.
+2. After each answer, one combined evaluator and decider call (5 second timeout) returns a verdict (`strong`, `partial`, `weak`, `off_topic`) and the next action. A timeout or invalid output falls back safely to the next core question.
+3. Candidate answers are treated strictly as data (wrapped in delimited tags, with instructions inside them ignored), so "ignore previous instructions" has no effect.
+4. Candidates never receive scores, verdicts or internal reasoning. Recruiters see a threaded transcript with per-turn verdicts, reasons and fallback badges.
+5. The final evaluation uses the heavy model over the whole transcript, scores every candidate on the same core questions, and does not penalize harder follow-ups. Terminated interviews are evaluated on the transcript so far.
+6. Code-type questions never receive follow-ups. Refreshing the page resumes from the stored transcript, and submitting the same turn twice does not create duplicates.
 
 ---
 
@@ -57,40 +100,35 @@ RecruitMate AI turns each step of early-stage hiring into a discrete, auditable 
 Candidate resume (text/PDF/DOCX)
         |
         v
- JD Parser  -->  structured job requirements
+ JD Parser --> structured job requirements
         |
         v
- Resume Screener  -->  match_score, matched/missing skills
+ Resume Screener (company weights) --> match_score, matched/missing skills
         |
-        +-- score < threshold --> Email Sender (auto-reject)
+        +-- below threshold --> reject (or Needs Review if approval mode is on)
         |
-        +-- score >= threshold
+        +-- above threshold
                 |
                 v
-        Question Generator --> 8 tailored questions
+        Question Generator (count, difficulty, types)
                 |
                 v
-        Public interview link created (token, no auth)
+        Public interview link (token, consent, proctoring)
                 |
                 v
-        AI Interviewer (voice) --> candidate answers
+        Interview: fixed questions OR adaptive follow-up loop
                 |
                 v
-        Answer Evaluator --> overall_score
+        Final evaluation (heavy model) --> overall_score
                 |
-        +-------+--------+
-        v                v
-  score >= threshold   score < threshold
-        |                |
-   Scheduler          Email Sender
-  (next step,          (auto-reject)
-   role-aware)
-        |
-        v
-   Email Sender (notify)
+                v
+        Scheduler (company thresholds) --> recommended next step
+                |
+                v
+        Email (company templates) + Slack / webhooks
 ```
 
-Every agent call — including its input, output, and status — is written to the `pipeline` collection, keyed by company, candidate, and job.
+Every agent call is logged to the `pipeline` collection. Every LLM call goes through a central helper that applies the company's model, language, tone and temperature, retries once on transient errors, enforces the token budget, and records usage.
 
 ---
 
@@ -99,93 +137,41 @@ Every agent call — including its input, output, and status — is written to t
 ```
 HR User --> React SPA <-- Candidate (token link, no auth)
               |
-              v  (JWT Bearer)
+              v  (JWT Bearer, role-checked)
           Flask API
               |
-   +----------+----------+----------+
-   v          v          v          v
- auth      jobs      candidates  pipeline
- blueprint blueprint  blueprint   blueprint
-   |          |          |          |
-   +----------+----------+----------+
+   +----------+-----------+-----------+----------+
+   v          v           v           v          v
+ auth      jobs      candidates   pipeline    settings
+   |          |           |           |          |
+   +----------+-----------+-----------+----------+
               v
        MongoDB Atlas
 
-pipeline/jobs/candidates --> 7 LangChain Agents --> Groq (llama-3.3-70b-versatile)
-pipeline --> Brevo Transactional Email
+agents --> central LLM helper --> Groq
+pipeline --> Brevo email, Slack, outgoing webhooks
 auth --> Cloudflare Turnstile
+public v1 API (API key) --> jobs, candidates
 ```
 
-The frontend never calls Groq, MongoDB, or Brevo directly — every external integration is mediated by the Flask API, which owns the JWT, the DB connection, and all agent invocations.
+The frontend never calls Groq, MongoDB or Brevo directly. The Flask API owns authentication, the database connection and all agent calls.
 
 ---
 
 ## Tech stack
 
-| Layer | Technology | Purpose |
-|---|---|---|
-| Frontend | React (CRA), Tailwind CSS | SPA, styling |
-| Routing | React Router v6 | Client-side routing |
-| Data fetching | Axios | REST calls to the Flask API |
-| Charts | Recharts | Analytics dashboard, heatmap |
-| Animation | Framer Motion | UI transitions |
-| Bot protection (client) | react-turnstile | Renders the Cloudflare Turnstile widget on Register |
-| Client-side vision | TensorFlow.js, face-api.js, coco-ssd | In-browser interview integrity checks |
-| Backend framework | Flask 3 | REST API, blueprint-based routing |
-| Auth | PyJWT + bcrypt | Custom JWT issuance/verification — no third-party auth framework |
-| 2FA | pyotp + qrcode[pil] | TOTP secret generation/verification, QR code provisioning |
-| Database | MongoDB Atlas (PyMongo) | Companies, jobs, candidates, pipeline logs, OTPs |
-| AI orchestration | LangChain (langchain-groq) | Structured prompt templates + JSON-mode parsing per agent |
-| LLM | Groq — llama-3.3-70b-versatile | All 7 agents |
-| Email | Brevo (sib-api-v3-sdk) | OTP, shortlist, rejection, scheduling, interview-link emails |
-| File parsing | PyPDF2, python-docx | Resume/JD upload extraction |
-| Bot protection (server) | Cloudflare Turnstile siteverify | Server-side token verification on /register |
-| WSGI server | Gunicorn | Production serving on Render |
-| Backend hosting | Render | API |
-| Frontend hosting | Vercel | SPA |
-| Uptime monitoring | UptimeRobot | Polls /api/health every 5 minutes |
-
----
-
-## Engineering decisions
-
-### Custom JWT instead of flask-jwt-extended
-
-**Context:** The API needed stateless per-company authentication with an 8-hour expiry and a way to resolve "current company" from the token on every request.
-**Options:** flask-jwt-extended, flask-login, or a minimal hand-rolled implementation.
-**Choice:** A hand-rolled `@jwt_required` decorator and `get_current_company()` helper in `utils/auth_helper.py`, built directly on PyJWT and bcrypt.
-**Reason:** The auth surface is small (register, OTP, login, one decorator) and didn't justify a framework dependency with its own configuration surface.
-**Trade-off:** Token refresh, blacklisting, and other conveniences that flask-jwt-extended provides out of the box would need to be built manually if the auth requirements grow.
-
-### TOTP-based 2FA, opt-in, layered on top of signup OTP
-
-**Context:** Signup already required a one-time email OTP to activate an account — but that only verifies email ownership once, at registration. It provides no protection against a stolen password being used to log in later, which matters given recruiter accounts hold candidate PII across a multi-tenant setup.
-**Options:** Reuse the existing Brevo email-OTP flow at every login, or add a separate app-based TOTP layer.
-**Choice:** TOTP via pyotp, opt-in per recruiter from a Settings page. Enabling requires scanning a QR code and confirming a live code (`/2fa/setup` → `/2fa/enable`); login checks `totp_enabled` and asks for a code after password verification succeeds; disabling requires re-entering the current password (`/2fa/disable`).
-**Reason:** TOTP doesn't depend on email deliverability, works offline, and is the industry-standard second factor — meaningfully stronger than reusing email OTP, for comparable implementation cost.
-**Trade-off:** Adds one more secret per company document (`totp_secret`) and a `pending_totp_secret` field during the setup handshake; the QR/secret flow requires clear UX so recruiters don't get locked out mid-setup.
-
-### Token-based access for the public interview routes
-
-**Context:** Candidates need to take an interview without creating an account.
-**Options:** Require candidate signup/login, or issue a single-use/expiring token tied to the candidate record.
-**Choice:** `POST /api/pipeline/interview/create/<candidate_id>` issues a token; `GET/POST /api/pipeline/interview/public/<token>` are intentionally unauthenticated and rely on the token as the access control.
-**Reason:** Forcing candidates through account creation adds friction to a flow that should take minutes.
-**Trade-off:** These routes currently have no rate limiting, so token guessing/brute-force is a live risk until that's added.
-
-### Cloudflare Turnstile scoped to Registration only, verified server-side first
-
-**Context:** The /register endpoint was open to scripted signups.
-**Options:** Add CAPTCHA at the frontend only, add it globally across all routes, or scope it narrowly with server-side enforcement.
-**Choice:** Turnstile (Managed mode) is rendered on the Register form only; the resulting token is verified against Cloudflare's siteverify endpoint as the first check inside `/api/auth/register` — before any database write or OTP email.
-**Reason:** Login and all other routes didn't have the same abuse profile, and verifying server-side means the check can't be bypassed by calling the API directly.
-**Trade-off:** Adds an external dependency and a network round-trip to every registration attempt.
-
-### tlsAllowInvalidCertificates=True on the MongoDB connection
-
-**Context:** The PyMongo TLS handshake to Atlas failed inconsistently across the dev/deploy environments used for this project.
-**Choice:** `utils/db.py` connects with relaxed TLS certificate validation.
-**Trade-off:** This weakens certificate validation and is not the setting you'd want in a security-sensitive production deployment — it's flagged here rather than hidden, and tightening it is a reasonable follow-up.
+| Layer | Technology |
+|---|---|
+| Frontend | React (CRA), Tailwind CSS, React Router v6, Axios, Recharts, Framer Motion |
+| Bot protection | Cloudflare Turnstile (client widget and server verification) |
+| Client-side vision | TensorFlow.js, face-api.js, coco-ssd (interview integrity checks) |
+| Backend | Flask 3, PyJWT, bcrypt, pyotp, qrcode |
+| Database | MongoDB Atlas (PyMongo) |
+| AI | Groq via LangChain and a central LLM helper |
+| Email | Brevo (sib-api-v3-sdk) |
+| File parsing | PyPDF2, python-docx |
+| Hosting | Render (API, Gunicorn), Vercel (SPA) |
+| Monitoring | UptimeRobot polling `/api/health` |
 
 ---
 
@@ -194,39 +180,20 @@ The frontend never calls Groq, MongoDB, or Brevo directly — every external int
 ```
 RecruitMate/
 ├── backend/
-│   ├── agents/
-│   │   ├── jd_parser.py
-│   │   ├── resume_screener.py
-│   │   ├── question_generator.py
-│   │   ├── ai_interview.py
-│   │   ├── answer_evaluator.py
-│   │   ├── scheduler.py
-│   │   ├── candidate_comparator.py
-│   │   └── email_sender.py
-│   ├── routes/
-│   │   ├── auth.py       (register / verify-otp / login / me / 2fa)
-│   │   ├── jobs.py
-│   │   ├── candidates.py
-│   │   └── pipeline.py
-│   ├── utils/
-│   │   ├── db.py
-│   │   ├── auth_helper.py
-│   │   └── file_extractor.py
+│   ├── agents/        (jd_parser, resume_screener, question_generator,
+│   │                   ai_interview, answer_evaluator, scheduler,
+│   │                   candidate_comparator, email_sender)
+│   ├── routes/        (auth, jobs, candidates, pipeline, settings, ...)
+│   ├── utils/         (db, auth_helper, settings, llm, file_extractor)
+│   ├── tests/         (pytest suite)
 │   ├── config.py
-│   ├── app.py
-│   ├── test_backend.py
-│   └── test_agents.py
+│   └── app.py
+├── scripts/           (seed_dev_user.py, retention purge)
 └── frontend/
     └── src/
-        ├── api/
-        ├── context/AuthContext.jsx
-        ├── components/{ui,layout}/
-        └── pages/
-            ├── auth/       (Login, Register, VerifyOTP)
-            ├── settings/   (Security Settings — 2FA)
-            ├── jobs/, candidates/, pipeline/
-            ├── analytics/
-            └── interview/
+        ├── api/, context/, components/
+        └── pages/     (auth, settings, jobs, candidates, pipeline,
+                        analytics, interview)
 ```
 
 ---
@@ -234,10 +201,9 @@ RecruitMate/
 ## Quick start
 
 ### Prerequisites
-- Python 3.11
-- Node.js 18+
+- Python 3.11, Node.js 18+
 - A MongoDB Atlas cluster
-- API credentials: Groq, Brevo, Cloudflare Turnstile
+- Credentials: Groq, Brevo, Cloudflare Turnstile
 
 ### Backend
 
@@ -263,25 +229,40 @@ cp .env.example .env
 npm start                       # http://localhost:3000
 ```
 
+### Local development against a separate database
+
+Never develop against the production database. Set `MONGO_DB=recruitmate_dev` in `backend/.env`, then create a test account:
+
+```bash
+python scripts/seed_dev_user.py
+```
+
+The seed script refuses to run against the production database name. For local Turnstile, put Cloudflare's test site key in `frontend/.env.local` and the matching test secret in `backend/.env`. Never use test keys on production.
+
+Flask does not reload `.env`, so stop and restart the backend after changing it.
+
 ---
 
 ## Environment variables
+
+Names only. Never commit real values. See `backend/config.py` for the full list and defaults.
 
 **backend/.env**
 
 ```
 GROQ_API_KEY=
 MONGO_URI=
+MONGO_DB=
 JWT_SECRET=
 BREVO_API_KEY=
 BREVO_SENDER_EMAIL=
 BREVO_SENDER_NAME=
 TURNSTILE_SECRET_KEY=
 FRONTEND_URL=
-# Optional AI / Model configuration
 GROQ_MODEL=
 GROQ_MODEL_HEAVY=
 GROQ_ALLOWED_MODELS=
+GOOGLE_CALENDAR_ENABLED=
 ```
 
 **frontend/.env**
@@ -291,135 +272,150 @@ REACT_APP_API_URL=
 REACT_APP_TURNSTILE_SITE_KEY=
 ```
 
-`REACT_APP_*` variables are baked into the build at compile time — changing them on Vercel requires a redeploy, not just an env var update.
+Notes:
+- Set `MONGO_DB=recruitmate` on the production backend. It is the database name your live data uses.
+- `REACT_APP_*` values are baked in at build time, so changing them on Vercel needs a redeploy.
+- `.env` and `.env.local` must stay out of git.
 
 ---
 
 ## API reference
 
-Base path: `/api`. 🔒 = requires `Authorization: Bearer <JWT>`. 🔗 = unauthenticated, token-secured.
+Base path: `/api`. Lock = requires `Authorization: Bearer <JWT>`. Link = unauthenticated and token-secured. Key = API key.
 
 **Auth**
 
 | Method | Route | Description |
 |---|---|---|
-| POST | /auth/register | Create company account — Turnstile-verified |
+| POST | /auth/register | Create company account (Turnstile-verified); re-sends OTP if the email is unverified |
 | POST | /auth/verify-otp | Verify signup OTP |
-| POST | /auth/login | Log in; returns `requires_2fa: true` if 2FA is enabled and no code sent |
-| GET | /auth/me 🔒 | Current authenticated company |
-| POST | /auth/2fa/setup 🔒 | Generate a new TOTP secret + QR code |
-| POST | /auth/2fa/enable 🔒 | Confirm code, activate 2FA |
-| GET | /auth/2fa/status 🔒 | Whether 2FA is enabled |
-| POST | /auth/2fa/disable 🔒 | Disable 2FA — requires current password |
+| POST | /auth/resend-otp | Send a fresh OTP to an unverified account |
+| POST | /auth/login | Log in (owner or team member); handles 2FA |
+| GET | /auth/me (Lock) | Current user |
+| POST/GET | /auth/2fa/* (Lock) | Set up, enable, check and disable TOTP |
 
-**Jobs** 🔒 (all routes)
+**Jobs / Candidates / Pipeline** (Lock, role-checked)
 
-| Method | Route | Description |
-|---|---|---|
-| POST | /jobs/ | Create a job posting |
-| GET | /jobs/ | List jobs |
-| GET | /jobs/\<job_id\> | Job detail |
-| PATCH | /jobs/\<job_id\>/status | Update job status |
-| DELETE | /jobs/\<job_id\> | Delete job |
-| POST | /jobs/generate-jd | AI-generate a full JD from one line |
-| GET | /jobs/analytics | Hiring funnel + per-job stats |
+Jobs: create, list, detail, status, delete, AI-generate JD, analytics. Candidates: list, screen, search, export, compare, detail, status, delete. Pipeline: send email, evaluate, schedule (returns a *recommended* decision), logs, create interview link, heatmap.
 
-**Candidates** 🔒 (all routes)
+**Public interview (Link)**
 
 | Method | Route | Description |
 |---|---|---|
-| GET | /candidates/ | List candidates |
-| POST | /candidates/\<job_id\>/screen | Screen resume(s) against a job |
-| GET | /candidates/search | Filtered search |
-| GET | /candidates/export | CSV export |
-| POST | /candidates/compare | AI comparison of 2–3 candidates |
-| GET | /candidates/\<job_id\> | Candidates for a job |
-| GET | /candidates/detail/\<candidate_id\> | Candidate detail |
-| PATCH | /candidates/detail/\<candidate_id\>/status | Update pipeline status |
-| DELETE | /candidates/detail/\<candidate_id\> | Delete candidate |
+| GET | /pipeline/interview/public/\<token\> | Load the interview (fixed list, or the active turn in adaptive mode) |
+| POST | /pipeline/interview/public/\<token\>/turn | Submit an answer and receive the next turn (adaptive mode) |
+| POST | /pipeline/interview/public/\<token\>/submit | Finish the interview and submit the integrity log |
 
-**Pipeline**
+**Settings** (Lock, admin+ for writes)
 
-| Method | Route | Auth | Description |
-|---|---|---|---|
-| POST | /pipeline/send-email/\<candidate_id\> | 🔒 | Send shortlist/interview-link email |
-| POST | /pipeline/evaluate/\<candidate_id\> | 🔒 | Evaluate submitted interview answers |
-| POST | /pipeline/interview/start/\<candidate_id\> | 🔒 | Start an AI interview session |
-| POST | /pipeline/interview/next | 🔒 | Advance to next interview question |
-| POST | /pipeline/interview/close/\<candidate_id\> | 🔒 | Close out an interview |
-| POST | /pipeline/schedule/\<candidate_id\> | 🔒 | Role-aware next-step scheduling |
-| GET | /pipeline/logs/\<candidate_id\> | 🔒 | Agent run history for a candidate |
-| POST | /pipeline/interview/create/\<candidate_id\> | 🔒 | Generate a public interview token/link |
-| GET | /pipeline/interview/public/\<token\> | 🔗 | Load interview by token |
-| POST | /pipeline/interview/public/\<token\>/submit | 🔗 | Submit interview answers |
-| POST | /pipeline/schedule-offline/\<candidate_id\> | 🔒 | Manually schedule an offline round |
-| GET | /pipeline/heatmap/jobs | 🔒 | Jobs with heatmap data available |
-| GET | /pipeline/heatmap | 🔒 | Interview performance heatmap data |
+| Method | Route | Description |
+|---|---|---|
+| GET | /settings | All sections merged with defaults |
+| PUT | /settings/\<section\> | Validate and save a section |
+| POST | /settings/\<section\>/reset | Restore defaults |
+| POST | /settings/email/preview | Render an email template with sample data |
+| GET | /settings/ai/usage | AI usage metrics |
+
+**Privacy** (Lock)
+
+| Method | Route | Description |
+|---|---|---|
+| GET | /privacy/candidates/\<id\>/export | JSON export of everything stored for a candidate |
+| DELETE | /candidates/\<id\>/data | Hard delete a candidate and related records |
+
+**Public v1 API (Key)**
+
+List jobs and create candidates with `Authorization: Bearer <api key>`. Keys carry scopes (`read:candidates`, `write:jobs`), are rate limited, and can never reach settings, team or deletion endpoints.
 
 ---
 
 ## AI system details
 
-- **Model:** Groq models (`GROQ_MODEL` for fast evaluator/decider turns, `GROQ_MODEL_HEAVY` for deep resume screening and final interview evaluation); configurable with pricing tracking and monthly token budgets in AI Settings.
-- **Adaptive interview loop:**
-  - Evaluates candidate answers turn-by-turn with a 5-second timeout and combined evaluator/decider agent.
-  - Generates contextual follow-ups (`probe_deeper`, `probe_gap`, `easier`, `restate`, `next_core`) constrained by company interview settings (`follow_up_mode`, `max_follow_ups_per_question`, `probe_depth`).
-  - Code-type questions strictly bypass follow-ups (`next_core`).
-  - Enforces prompt-injection defense with `<candidate_answer>` encapsulation and tag neutralization.
-  - Final evaluation runs over the complete threaded transcript using the heavy model, normalizing scores across core questions to preserve fairness without penalizing candidates for harder follow-ups.
-- **Orchestration:** each agent is a standalone LangChain ChatGroq call with a fixed system prompt instructing JSON-only output — there is no LangGraph state machine; the pipeline is orchestrated by the Flask route handlers, not by the LLM.
-- **No retrieval/RAG:** resume and JD text are passed directly into the prompt as plain text.
-- **Contract:** every agent function returns a `{"success": bool, "data": {...}}` shape.
-- **Guardrails in prompts:** scoring rubrics are given explicitly in-prompt to constrain the model.
+- **Models:** configurable per company from an allow-list (defaults `openai/gpt-oss-20b` and `openai/gpt-oss-120b`). The default model handles fast tasks (JD parsing, questions, per-turn decisions) and the heavy model handles deep resume screening and final evaluation.
+- **Central LLM helper:** applies company language, tone and temperature, handles reasoning-model quirks (minimum token limits, empty responses, JSON extraction), retries once, logs usage and enforces the monthly token budget.
+- **Usage dashboard:** calls, tokens, estimated cost (clearly an estimate), per-agent and per-model breakdown, latency and failure rate.
+- **Orchestration:** each agent is a standalone call with JSON-only output. Flask route handlers orchestrate the pipeline, not the LLM.
+- **No RAG:** resume and JD text go directly into the prompt.
+- **Contract:** every agent returns `{"success": bool, "data": {...}}`.
+- **Safety:** candidate text is always treated as data, LLM output is schema-validated, and failures fall back to safe defaults.
 
 ---
 
 ## Security
 
-- **Authentication:** custom JWT (PyJWT), 8-hour expiry, verified via a `@jwt_required` decorator; passwords hashed with bcrypt.
-- **Signup verification:** email OTP required before an account is usable.
-- **Two-factor authentication:** opt-in TOTP, managed from a Security Settings page. Login checks `totp_enabled` after password verification and requires a valid time-based code before issuing a JWT (`valid_window=1` tolerates ~30s of clock drift). Disabling 2FA requires re-entering the current password.
-- **Bot protection:** Cloudflare Turnstile verified server-side on /register, ahead of any DB write.
-- **Public routes:** interview-taking routes are deliberately unauthenticated and secured by an unguessable per-candidate token instead of a session.
-- **Known gaps:** no rate limiting yet on public interview routes; MongoDB TLS validation is currently relaxed.
+- **Authentication:** custom JWT (PyJWT, 8-hour expiry), bcrypt password hashing, email OTP verification and opt-in TOTP 2FA.
+- **Authorization:** role-based access control (owner, admin, recruiter, viewer) enforced server-side, and disabled members are blocked on their next request.
+- **Invites:** single-use tokens stored only as hashes, expiring after 72 hours.
+- **API keys:** shown once, stored only as hashes, scoped and revocable.
+- **Outgoing webhooks:** HMAC-SHA256 signatures, HTTPS only, SSRF protection (private, loopback and link-local addresses blocked, redirects not followed).
+- **Slack webhook URLs** are never returned by the API.
+- **Uploads:** logos are validated by file content, size-limited, and PNG/JPG only.
+- **Privacy:** consent is recorded before interviews, configurable retention, candidate export and hard delete, and an audit log of administrative actions.
+- **Environment isolation:** development uses a separate database, and standalone scripts refuse to run against the production database.
+- **Bot protection:** Cloudflare Turnstile verified server-side before any registration write.
 
 ---
 
 ## Testing
 
-There is no automated test suite (pytest/Jest) or CI pipeline yet.
+```bash
+cd backend
+pytest
+```
+
+Tests cover settings validation and defaults, role permissions, the scheduler and approval flow, email rendering and escaping, LLM helper behavior with a mocked client, the adaptive interview loop (limits, fallbacks, prompt injection, no leakage of internal fields), SSRF blocking, webhook signing, and API key scoping.
+
+Frontend build check:
 
 ```bash
-python backend/test_backend.py   # full flow integration check
-python backend/test_agents.py    # per-agent integration check
+cd frontend && npm run build
 ```
+
+---
+
+## What changed in this release
+
+- Added the full **Settings system** (Security, Hiring Rules, Interview, Email, AI, Team & Roles, Company, Privacy, Integrations).
+- Scheduler thresholds, screening weights, interview limits, proctoring rules and email content are now configurable instead of hardcoded.
+- Added **human approval mode** and clearer wording: scheduling now returns a *recommended* decision, and scheduling a candidate with no evaluation returns a clear error instead of crashing.
+- Moved to **gpt-oss models** with a central LLM helper, usage logging, cost estimates and a monthly token budget.
+- Added **team roles, invites and an audit log**.
+- Added **company branding**, consent, data export, hard delete and retention purge.
+- Added **Slack, signed webhooks and API keys** with a public v1 API.
+- Added the **adaptive follow-up interview** with a threaded recruiter transcript and fairness-normalized final evaluation.
+- Fixed unverified-account lockout with **resend OTP** and a safer register flow, and added better Brevo and Turnstile error logging.
+- Added a **pytest suite** and separated dev and production databases.
 
 ---
 
 ## Limitations
 
-- No automated test suite or CI.
-- Public interview routes have no rate limiting.
-- `ai_interview.py` contains dead/unused code paths pending cleanup.
-- MongoDB TLS certificate validation is relaxed.
-- Single LLM provider (Groq) with no fallback.
-- No React error boundaries yet.
+- No rate limiting yet on login, register, OTP and public interview routes (API keys are rate limited).
+- MongoDB TLS certificate validation is relaxed in `utils/db.py`; tightening it is a planned follow-up.
+- Single LLM provider (Groq) with no fallback provider.
+- The daily digest email setting is stored but the digest job is not implemented.
+- Google Calendar/Meet is optional and off by default; it needs Google Cloud setup.
+- No React error boundaries and no CI pipeline yet.
+- No 2FA recovery codes.
 - Offer letter generation is not yet built.
-- No 2FA recovery codes yet — lost authenticator access has no backup-code or admin-reset flow.
 
 ---
 
 ## Roadmap
 
+- [ ] Rate limiting (Flask-Limiter) on authentication and public interview routes
+- [ ] CI pipeline running pytest and the frontend build
+- [ ] Voice interviews with speech-to-text and text-to-speech
+- [ ] Bias-blind resume screening mode
+- [ ] Talent pool re-matching with vector search
 - [ ] One-click AI-generated offer letter
-- [ ] Rate limiting on public interview routes
 - [ ] React error boundaries
-- [ ] Remove dead code paths in ai_interview.py
-- [ ] Automated test suite and CI
 - [ ] Tighten MongoDB TLS configuration
-- [ ] 2FA recovery/backup codes
+- [ ] 2FA recovery codes
+- [x] Settings system with roles, privacy and integrations
+- [x] Adaptive follow-up interviews
 - [x] Interview performance heatmap
-- [x] Cloudflare Turnstile bot protection on Registration
+- [x] Cloudflare Turnstile on registration
 - [x] Opt-in TOTP two-factor authentication
 
 ---
@@ -427,8 +423,8 @@ python backend/test_agents.py    # per-agent integration check
 ## Author
 
 **Bonamukkala Charan Reddy**
-First-year B.Sc Computer Science, NIAT Hyderabad (BITS Pilani-affiliated)
+Second-year B.Sc Computer Science (Generative AI), NIAT Hyderabad (BITS Pilani-affiliated)
 
-- GitHub — bonamukkala-bot
-- Portfolio — charan-me.vercel.app
-- LinkedIn — bonamukkala-charan
+- GitHub: bonamukkala-bot
+- Portfolio: charan-me.vercel.app
+- LinkedIn: bonamukkala-charan
